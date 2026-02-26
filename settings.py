@@ -8,7 +8,7 @@ TILESIZE = 32
 
 # player values
 PLAYER_SPEED = 280
-PLAYER_HIT_RECT = pg.Rect(0, 0, TILESIZE, TILESIZE)
+PLAYER_HIT_RECT = pg.Rect(0, 0, TILESIZE-5, TILESIZE-5)
 
 # color values
 

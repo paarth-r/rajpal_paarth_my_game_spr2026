@@ -41,17 +41,20 @@ class Game:
         # setting up pygame screen using tuple value for width height
         self.screen = pg.display.set_mode((WIDTH, HEIGHT))
         pg.display.set_caption(TITLE)
+
         self.clock = pg.time.Clock()
         self.running = True
         self.playing = True
         self.game_cooldown = Cooldown(5000)
-   
+        print('game instantiated...')
         
     
     # a method is a function tied to a Class
 
     def load_data(self):
         self.game_dir = path.dirname(__file__)
+        self.img_dir = path.join(self.game_dir, 'images')
+        self.wall_img = pg.image.load(path.join(self.img_dir, 'wall_art.png')).convert_alpha()
         self.map = Map(path.join(self.game_dir, 'level1.txt'))
         print('data is loaded')
 
@@ -70,6 +73,10 @@ class Game:
                     Wall(self, col, row)
                 if tile == 'P':
                     self.player = Player(self, col, row)
+                if tile == 'M':
+                    Mob(self, col, row)
+                if tile == 'C':
+                    Coin(self, col, row)
         self.run()
 
     def run(self):
