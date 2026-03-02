@@ -47,7 +47,7 @@ class Player(Sprite):
         self.pos = vec(x,y) * TILESIZE
         self.hit_rect = PLAYER_HIT_RECT
         self.jumping = False
-        self.walking = False
+        self.moving = False
         self.last_update = 0
         self.current_frame = 0
     def get_keys(self):
@@ -67,24 +67,40 @@ class Player(Sprite):
     def load_images(self):
         self.standing_frames = [self.spritesheet.get_image(0,0,TILESIZE, TILESIZE), 
                                 self.spritesheet.get_image(TILESIZE,0,TILESIZE, TILESIZE)]
+        self.moving_frames = [self.spritesheet.get_image(TILESIZE*2,0,TILESIZE, TILESIZE), 
+                                self.spritesheet.get_image(TILESIZE*3,0,TILESIZE, TILESIZE)]
         for frame in self.standing_frames:
             frame.set_colorkey(BLACK)
 
     def animate(self):
         now = pg.time.get_ticks()
-        if not self.jumping and not self.walking:
-            if now - self.last_update > 3500:
+        if not self.jumping and not self.moving:
+            if now - self.last_update > 350:
                 self.last_update = now
                 self.current_frame = (self.current_frame + 1) % len(self.standing_frames)
                 bottom = self.rect.bottom
                 self.image = self.standing_frames[self.current_frame]
                 self.rect = self.image.get_rect()
                 self.rect.bottom = bottom
-
+        elif self.moving:
+            if now - self.last_update > 350:
+                self.last_update = now
+                self.current_frame = (self.current_frame + 1) % len(self.moving_frames)
+                bottom = self.rect.bottom
+                self.image = self.moving_frames[self.current_frame]
+                self.rect = self.image.get_rect()
+                self.rect.bottom = bottom
+            
+    def state_check(self):
+        if self.vel != vec(0,0):
+            self.moving = True
+        else: 
+            self.moving = False
 
     def update(self):
         # print("player updating")
         self.get_keys()
+        self.state_check()
         self.animate()
         self.rect.center = self.pos
         self.pos += self.vel * self.game.dt
