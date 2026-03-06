@@ -1,8 +1,12 @@
+from ctypes import Array
+
 import pygame as pg
 from pygame.sprite import Sprite
+from player_states import *
 from settings import *
 from utils import *
 from  os import path
+from state_machine import *
 
 vec = pg.math.Vector2
 
@@ -41,7 +45,9 @@ class Player(Sprite):
         self.spritesheet = Spritesheet(path.join(self.game.img_dir, "sprite_sheet.png"))
         self.load_images()
         self.image = pg.Surface((TILESIZE, TILESIZE))
-        self.image.fill(WHITE)
+        self.image = self.spritesheet.get_image(0,0,TILESIZE,TILESIZE)
+        self.image.set_colorkey(BLACK)
+        # self.image.fill(WHITE)
         self.rect = self.image.get_rect()
         self.vel = vec(0,0)
         self.pos = vec(x,y) * TILESIZE
@@ -50,9 +56,15 @@ class Player(Sprite):
         self.moving = False
         self.last_update = 0
         self.current_frame = 0
+        self.state_machine = StateMachine()
+        self.states: Array[State] = [PlayerIdleState(self), PlayerMoveState(self)]
+        self.state_machine.start_machine(self.states)
     def get_keys(self):
         self.vel = vec(0,0)
         keys = pg.key.get_pressed()
+        if keys[pg.K_f]:
+            print(' fired a projectile')
+            p = Projectile(self.game, self.rect.x, self.rect.y)
         if keys[pg.K_a]:
             self.vel.x = -PLAYER_SPEED
         if keys[pg.K_d]:
@@ -63,7 +75,6 @@ class Player(Sprite):
             self.vel.y = PLAYER_SPEED
         if self.vel.x != 0 and self.vel.y != 0:
             self.vel *= 0.7071
-
     def load_images(self):
         self.standing_frames = [self.spritesheet.get_image(0,0,TILESIZE, TILESIZE), 
                                 self.spritesheet.get_image(TILESIZE,0,TILESIZE, TILESIZE)]
@@ -71,12 +82,14 @@ class Player(Sprite):
                                 self.spritesheet.get_image(TILESIZE*3,0,TILESIZE, TILESIZE)]
         for frame in self.standing_frames:
             frame.set_colorkey(BLACK)
-
+        for frame in self.moving_frames:
+            frame.set_colorkey(BLACK)
     def animate(self):
         now = pg.time.get_ticks()
         if not self.jumping and not self.moving:
             if now - self.last_update > 350:
                 self.last_update = now
+                
                 self.current_frame = (self.current_frame + 1) % len(self.standing_frames)
                 bottom = self.rect.bottom
                 self.image = self.standing_frames[self.current_frame]
@@ -90,15 +103,17 @@ class Player(Sprite):
                 self.image = self.moving_frames[self.current_frame]
                 self.rect = self.image.get_rect()
                 self.rect.bottom = bottom
-            
+
     def state_check(self):
         if self.vel != vec(0,0):
+            self.state_machine.transition("move")
             self.moving = True
         else: 
+            self.state_machine.transition("idle")
             self.moving = False
-
     def update(self):
         # print("player updating")
+        self.state_machine.update()
         self.get_keys()
         self.state_check()
         self.animate()
@@ -125,7 +140,6 @@ class Mob(Sprite):
     def update(self):
         hits = pg.sprite.spritecollide(self, self.game.all_walls, True)
         if hits:
-            print("collided")
             self.speed -=1
             self.new_rect = pg.Rect(self.pos.x, self.pos.y, 100, 100) 
             self.rect = self.new_rect
@@ -151,6 +165,27 @@ class Wall(Sprite):
         self.rect.center = self.pos
     def update(self):
         pass
+
+
+
+class Projectile(Sprite):
+    def __init__(self, game, x, y):
+        self.groups = game.all_sprites, game.all_projectiles
+        Sprite.__init__(self, self.groups)
+        self.game = game
+        self.image = pg.Surface((TILESIZE, TILESIZE))
+        self.image.fill(RED)
+        self.rect = self.image.get_rect()
+        self.vel = vec(0,0)
+        self.pos = vec(x,y) * TILESIZE
+        self.speed = 10
+        print("im a real projectile...")
+    def update(self):
+        pass
+        # hits = pg.sprite.spritecollide(self, self.game.all_walls, True)
+        # # print(hits)
+        # self.pos += self.speed * self.vel
+        # self.rect.center = self.pos
 
 
 class Coin(Sprite):
