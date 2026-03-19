@@ -28,13 +28,14 @@ class Game:
     def load_data(self):
         self.game_dir = path.dirname(__file__)
         self.img_dir = path.join(self.game_dir, 'images')
+        self.levels_dir = path.join(self.game_dir, 'levels')
         self.save_path = path.join(self.game_dir, 'save_inventory.json')
         self.wall_img = pg.image.load(path.join(self.img_dir, 'wall_art.png')).convert_alpha()
-        self.map = Map(path.join(self.game_dir, 'level1.txt'))
-
-        self.map_img = pg.Surface((self.map.width, self.map.height))
-        self.map_img.fill(FLOOR_COLOR)
-        self.map_rect = self.map_img.get_rect()
+        self.level_order = ['level1.txt', 'level2.txt']
+        self.current_level_name = self.level_order[0]
+        self.mob_states_by_level = {}
+        self._load_world_state_from_save()
+        self.load_level(self.current_level_name, create_player=True)
 
     def is_walkable(self, col, row):
         """True if (col, row) is in bounds, not a wall, and not occupied by a mob or player (current or sliding-to)."""
@@ -42,7 +43,10 @@ class Game:
             return False
         if col < 0 or col >= len(self.map.data[0]):
             return False
-        if self.map.data[row][col] == '1':
+        tile = self.map.data[row][col]
+        if tile == '1':
+            return False
+        if tile == 'N' and not self.level_exit_open:
             return False
         if (self.player.tile_x, self.player.tile_y) == (col, row):
             return False
@@ -55,26 +59,6 @@ class Game:
 
     def new(self):
         self.load_data()
-        self.all_sprites = pg.sprite.Group()
-        self.all_walls = pg.sprite.Group()
-        self.all_mobs = pg.sprite.Group()
-        self.all_drops = pg.sprite.Group()
-        self.checkpoint_tile = None
-
-        for row, tiles in enumerate(self.map.data):
-            for col, tile in enumerate(tiles):
-                if tile == '1':
-                    Wall(self, col, row)
-                if tile == 'P':
-                    self.player = Player(self, col, row)
-                    if self.checkpoint_tile is None:
-                        self.checkpoint_tile = (col, row)
-                if tile == 'K':
-                    self.checkpoint_tile = (col, row)
-                if tile == 'M':
-                    Mob(self, col, row)
-
-        self.camera = Camera(self.map.width, self.map.height)
         self.inventory = Inventory(INVENTORY_SLOTS, HOTBAR_SLOTS)
         loaded = self.load_inventory_state()
         if not loaded:
@@ -102,6 +86,92 @@ class Game:
         self.respawn_button_rect = None
         self.state = 'intro'
         self.run()
+
+    def _load_world_state_from_save(self):
+        """Load world-level state from save (current level + mobs)."""
+        if not path.exists(self.save_path):
+            return
+        try:
+            with open(self.save_path, 'r') as f:
+                payload = json.load(f)
+            level_name = payload.get('current_level')
+            if level_name in self.level_order:
+                self.current_level_name = level_name
+            mob_states = payload.get('mob_states', {})
+            if isinstance(mob_states, dict):
+                self.mob_states_by_level = mob_states
+        except Exception:
+            pass
+
+    def load_level(self, level_name, create_player=False):
+        """Build map/entities for a level; keep player instance when transitioning."""
+        self.current_level_name = level_name
+        level_path = path.join(self.levels_dir, level_name)
+        self.map = Map(level_path)
+        self.map_img = pg.Surface((self.map.width, self.map.height))
+        self.map_img.fill(FLOOR_COLOR)
+        self.map_rect = self.map_img.get_rect()
+        self.all_sprites = pg.sprite.Group()
+        self.all_walls = pg.sprite.Group()
+        self.all_mobs = pg.sprite.Group()
+        self.all_drops = pg.sprite.Group()
+        self.checkpoint_tile = None
+        self.level_exit_tile = None
+        player_spawn = None
+        default_mob_spawns = []
+
+        for row, tiles in enumerate(self.map.data):
+            for col, tile in enumerate(tiles):
+                if tile == '1':
+                    Wall(self, col, row)
+                elif tile == 'P':
+                    player_spawn = (col, row)
+                    if self.checkpoint_tile is None:
+                        self.checkpoint_tile = (col, row)
+                elif tile == 'K':
+                    self.checkpoint_tile = (col, row)
+                elif tile == 'N':
+                    self.level_exit_tile = (col, row)
+                elif tile == 'M':
+                    default_mob_spawns.append((col, row))
+
+        if self.checkpoint_tile is None and player_spawn is not None:
+            self.checkpoint_tile = player_spawn
+        if player_spawn is None:
+            player_spawn = self.checkpoint_tile if self.checkpoint_tile else (1, 1)
+
+        if create_player or not hasattr(self, 'player') or self.player is None:
+            self.player = Player(self, player_spawn[0], player_spawn[1])
+        else:
+            self.all_sprites.add(self.player)
+            self.player.clear_move_queue()
+            self.player.move_state = 'idle'
+            self.player.slide_to_tile = None
+            self.player.tile_x, self.player.tile_y = self.checkpoint_tile if self.checkpoint_tile else player_spawn
+            self.player.pos = vec(self.player.tile_x * TILESIZE + TILESIZE / 2, self.player.tile_y * TILESIZE + TILESIZE / 2)
+            self.player.hit_rect.center = self.player.pos
+            self.player.rect.center = self.player.hit_rect.center
+
+        saved_mobs = self.mob_states_by_level.get(level_name)
+        if isinstance(saved_mobs, list):
+            for m in saved_mobs:
+                tx = int(m.get('tile_x', 0))
+                ty = int(m.get('tile_y', 0))
+                mob_type = m.get('mob_type', 'statue')
+                health = int(m.get('health', MOB_HP))
+                if health <= 0:
+                    continue
+                mob = Mob(self, tx, ty, mob_type=mob_type)
+                mob.health = max(1, health)
+                if m.get('state') in ('inactive', 'idle', 'walk', 'attack'):
+                    mob.state = m.get('state')
+        else:
+            for col, row in default_mob_spawns:
+                Mob(self, col, row)
+
+        self.level_exit_open = len([m for m in self.all_mobs if getattr(m, 'state', None) != 'dead']) == 0
+        self.camera = Camera(self.map.width, self.map.height)
+        self.manual_target = None
 
     def run(self):
         while self.running:
@@ -208,8 +278,9 @@ class Game:
         pass
 
     def save_inventory_state(self):
-        """Persist inventory slots, equipment, and selected hotbar index."""
+        """Persist inventory, player health, current level, and per-level mob states."""
         try:
+            self.mob_states_by_level[self.current_level_name] = self._snapshot_current_level_mobs()
             slots = []
             for slot in self.inventory.slots:
                 if slot is None:
@@ -221,12 +292,29 @@ class Game:
                 'equipment': dict(self.inventory.equipment),
                 'selected_hotbar_index': int(self.inventory.selected_hotbar_index),
                 'player_health': int(self.player.health),
+                'current_level': self.current_level_name,
+                'mob_states': self.mob_states_by_level,
             }
             with open(self.save_path, 'w') as f:
                 json.dump(payload, f, indent=2)
             return True
         except Exception:
             return False
+
+    def _snapshot_current_level_mobs(self):
+        """Serialize current level's non-dead mobs."""
+        result = []
+        for mob in self.all_mobs:
+            if getattr(mob, 'state', None) == 'dead' or mob.health <= 0:
+                continue
+            result.append({
+                'tile_x': int(mob.tile_x),
+                'tile_y': int(mob.tile_y),
+                'health': int(mob.health),
+                'state': mob.state,
+                'mob_type': getattr(mob, 'mob_type', 'statue'),
+            })
+        return result
 
     def load_inventory_state(self):
         """Load inventory state from disk. Returns True if loaded successfully."""
@@ -271,6 +359,9 @@ class Game:
             self.inv_dragging = None
             self.inv_selected = None
             return
+        live_mobs = [m for m in self.all_mobs if getattr(m, 'state', None) != 'dead' and m.health > 0]
+        if not self.level_exit_open and len(live_mobs) == 0:
+            self.level_exit_open = True
         # Keep manual target valid
         if self.manual_target is not None:
             if (not self.manual_target.alive()) or getattr(self.manual_target, 'state', None) == 'dead':
@@ -281,6 +372,10 @@ class Game:
             if best is not None:
                 best.hurt(self.player.get_effective_damage())
                 self.player.attack_hit_dealt = True
+        if self.level_exit_open and self.level_exit_tile is not None:
+            if (self.player.tile_x, self.player.tile_y) == self.level_exit_tile:
+                self.go_to_next_level()
+                return
         self.camera.update(self.player)
 
     def draw(self):
@@ -309,6 +404,16 @@ class Game:
             cp_screen = self.camera.apply_rect(cp_rect)
             pg.draw.rect(self.screen, (60, 120, 220), cp_screen)
             pg.draw.rect(self.screen, WHITE, cp_screen, 2)
+        # Exit tile: locked looks like wall; unlocked becomes purple doorway.
+        if self.level_exit_tile is not None:
+            ex_rect = pg.Rect(self.level_exit_tile[0] * TILESIZE, self.level_exit_tile[1] * TILESIZE, TILESIZE, TILESIZE)
+            ex_screen = self.camera.apply_rect(ex_rect)
+            if self.level_exit_open:
+                pg.draw.rect(self.screen, (145, 60, 210), ex_screen)
+                pg.draw.rect(self.screen, WHITE, ex_screen, 2)
+            else:
+                wall_scaled = pg.transform.scale(self.wall_img, (ex_screen.width, ex_screen.height))
+                self.screen.blit(wall_scaled, ex_screen)
         # Draw path preview: outlined tiles for queued moves
         path_tiles = self.player.get_path_tiles()
         path_rect = pg.Rect(0, 0, TILESIZE, TILESIZE)
@@ -455,6 +560,26 @@ class Game:
         self.player.health = self.player.max_health
         self.manual_target = None
         self.state = 'playing'
+
+    def go_to_next_level(self):
+        """Transition through unlocked exit to the next level file."""
+        try:
+            idx = self.level_order.index(self.current_level_name)
+        except ValueError:
+            idx = 0
+        if idx + 1 >= len(self.level_order):
+            return
+        self.mob_states_by_level[self.current_level_name] = self._snapshot_current_level_mobs()
+        next_level = self.level_order[idx + 1]
+        self.load_level(next_level, create_player=False)
+        # Ensure camera and gameplay continue cleanly on transition.
+        self.pause_menu_open = False
+        self.inventory_open = False
+        self.inv_dragging = None
+        self.inv_selected = None
+        self.manual_target = None
+        self.camera.update(self.player)
+        self.save_inventory_state()
 
     def draw_intro(self):
         """Menu-style title screen with interactive buttons."""

@@ -2,9 +2,12 @@
   "slots": [
     [
       "gold_coin",
-      13
+      30
     ],
-    null,
+    [
+      "health_potion",
+      1
+    ],
     [
       "gladius",
       1
@@ -39,5 +42,32 @@
     "shield": null
   },
   "selected_hotbar_index": 1,
-  "player_health": 150
+  "player_health": 150,
+  "current_level": "level2.txt",
+  "mob_states": {
+    "level1.txt": [],
+    "level2.txt": [
+      {
+        "tile_x": 6,
+        "tile_y": 5,
+        "health": 200,
+        "state": "idle",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 18,
+        "tile_y": 5,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 15,
+        "tile_y": 9,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      }
+    ]
+  }
 }

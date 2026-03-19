@@ -44,8 +44,7 @@ class Camera:
     def update(self, target):
         x = target.rect.centerx - self.view_w / 2
         y = target.rect.centery - self.view_h / 2
-        x = max(0, min(self.map_width - self.view_w, x))
-        y = max(0, min(self.map_height - self.view_h, y))
+        # Unclamped camera: allow viewing beyond map boundaries/walls.
         self.camera = pg.Rect(x, y, self.view_w, self.view_h)
 
 
