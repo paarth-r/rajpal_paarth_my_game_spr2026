@@ -66,8 +66,6 @@ class Game:
                     self.player = Player(self, col, row)
                 if tile == 'M':
                     Mob(self, col, row)
-                if tile == 'C':
-                    Coin(self, col, row)
 
         self.camera = Camera(self.map.width, self.map.height)
         self.inventory = Inventory(INVENTORY_SLOTS, HOTBAR_SLOTS)
@@ -114,6 +112,8 @@ class Game:
                 if self.inventory_open:
                     if event.key in (INVENTORY_KEY, CHARACTER_KEY, pg.K_ESCAPE):
                         self.inventory_open = False
+                        self.inv_dragging = None
+                        self.inv_selected = None
                     continue
                 if event.key in (INVENTORY_KEY, CHARACTER_KEY):
                     self.inventory_open = True
@@ -123,6 +123,8 @@ class Game:
                     continue
                 if event.key == pg.K_SPACE:
                     self.player.attack()
+                if event.key == pg.K_f:
+                    self.use_selected_item()
                 if event.key == pg.K_DELETE or event.key == pg.K_BACKSPACE:
                     self.player.clear_move_queue()
                 # Hold keys to queue moves (path preview); executes at speed
@@ -345,7 +347,13 @@ class Game:
             font = pg.font.Font(pg.font.match_font('arial'), 14)
             if count > 1:
                 text = font.render(str(count), True, WHITE)
-                self.screen.blit(text, (x + SLOT_SIZE - text.get_width() - 2, y + SLOT_SIZE - text.get_height() - 2))
+                badge_w = text.get_width() + 4
+                badge_h = text.get_height() + 2
+                badge_x = x + SLOT_SIZE - badge_w - 1
+                badge_y = y + SLOT_SIZE - badge_h - 1
+                pg.draw.rect(self.screen, (20, 20, 20), (badge_x, badge_y, badge_w, badge_h))
+                pg.draw.rect(self.screen, (70, 70, 70), (badge_x, badge_y, badge_w, badge_h), 1)
+                self.screen.blit(text, (badge_x + 2, badge_y + 1))
         return rect
 
     def draw_hotbar(self):
@@ -358,33 +366,60 @@ class Game:
             slot_data = self.inventory.get_hotbar_slot(i)
             self.draw_slot(x, y, slot_data, selected=(i == self.inventory.selected_hotbar_index))
         font = pg.font.Font(pg.font.match_font('arial'), 14)
-        hint = font.render("1-8 select  E / I inventory", True, DARKGRAY)
+        hint = font.render("1-8 select  F use item  E / I inventory", True, DARKGRAY)
         self.screen.blit(hint, (start_x, y + SLOT_SIZE + 4))
 
+    def use_selected_item(self):
+        """Use currently selected hotbar item (e.g. health potion)."""
+        idx = self.inventory.selected_hotbar_index
+        slot_data = self.inventory.get_slot(idx)
+        if slot_data is None:
+            return False
+        item_id, _ = slot_data
+        item_def = ITEM_DEFS.get(item_id, {})
+        if item_def.get('type') != 'consumable':
+            return False
+        effect = item_def.get('effect', {})
+        healed = int(effect.get('heal', 0))
+        applied = False
+        if healed > 0:
+            max_hp = self.player.get_effective_max_health()
+            old_hp = self.player.health
+            self.player.health = min(max_hp, self.player.health + healed)
+            applied = self.player.health > old_hp
+        if not applied:
+            return False
+        consumed = self.inventory.consume_from_slot(idx, 1)
+        return consumed is not None
+
     def draw_inventory(self):
-        """Minecraft-style inventory: player preview + armor slots on left, stats below, inventory grid on right."""
+        """Minecraft-style inventory with hover tooltips, click-to-select, drag-and-drop, right-click equip."""
         overlay = pg.Surface((WIDTH, HEIGHT), pg.SRCALPHA)
         overlay.fill((0, 0, 0, 180))
         self.screen.blit(overlay, (0, 0))
         font_title = pg.font.Font(pg.font.match_font('arial'), 28)
         font = pg.font.Font(pg.font.match_font('arial'), HUD_FONT_SIZE)
         font_sm = pg.font.Font(pg.font.match_font('arial'), 14)
+        font_tip = pg.font.Font(pg.font.match_font('arial'), 13)
 
-        panel_w = 680
-        panel_h = 520
+        mouse_pos = pg.mouse.get_pos()
+        self.inv_slot_rects = []
+        hovered_item_id = None
+
+        panel_w = 700
+        panel_h = 530
         panel_x = (WIDTH - panel_w) // 2
         panel_y = (HEIGHT - panel_h) // 2
         pg.draw.rect(self.screen, (30, 30, 30), (panel_x, panel_y, panel_w, panel_h))
         pg.draw.rect(self.screen, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
 
-        close_hint = font_sm.render("E / I / Esc to close", True, GOLD)
-        self.screen.blit(close_hint, (panel_x + panel_w - close_hint.get_width() - 12, panel_y + 8))
+        close_hint = font_sm.render("E / I / Esc to close   Left-click: select   Right-click: equip/unequip   Drag to swap", True, GOLD)
+        self.screen.blit(close_hint, (panel_x + 12, panel_y + panel_h - 22))
 
         # --- LEFT SIDE: player preview, armor slots, stats ---
         left_x = panel_x + 20
         cy = panel_y + 16
 
-        # Player preview (large sprite)
         preview_size = 96
         player_img = self.player.move_frames.get(self.player.facing, [None])[0]
         if player_img:
@@ -394,63 +429,43 @@ class Game:
             pg.draw.rect(self.screen, SLOT_BORDER, preview_rect.inflate(8, 8), 2)
             self.screen.blit(preview, preview_rect)
 
-        # Armor slots to the right of preview
         eq_x = left_x + preview_size + 30
         eq_y = cy
-        eq_slot_size = SLOT_SIZE
-        eq_label_map = {
-            'head': 'Head',
-            'chest': 'Chest',
-            'boots': 'Boots',
-            'shield': 'Shield',
-            'weapon': 'Weapon',
-        }
+        eq_label_map = {'head': 'Head', 'chest': 'Chest', 'boots': 'Boots', 'shield': 'Shield', 'weapon': 'Weapon'}
         eq_order = ['head', 'chest', 'boots', 'shield', 'weapon']
         for eq_slot in eq_order:
             item_id = self.inventory.equipment.get(eq_slot)
             slot_data = (item_id, 1) if item_id else None
-            self.draw_slot(eq_x, eq_y, slot_data)
+            is_drag_src = self.inv_dragging and self.inv_dragging[0] == 'equip' and self.inv_dragging[1] == eq_slot
+            is_selected = self.inv_selected == ('equip', eq_slot)
+            r = self.draw_slot(eq_x, eq_y, slot_data, highlight=is_selected, dimmed=is_drag_src)
+            self.inv_slot_rects.append((r, 'equip', eq_slot))
+            if r.collidepoint(mouse_pos) and item_id and not is_drag_src:
+                hovered_item_id = item_id
             label = font_sm.render(eq_label_map[eq_slot], True, DARKGRAY)
-            self.screen.blit(label, (eq_x + eq_slot_size + 6, eq_y + eq_slot_size // 2 - label.get_height() // 2))
-            if item_id:
-                item_def = ITEM_DEFS.get(item_id, {})
-                name_surf = font_sm.render(item_def.get('name', item_id), True, WHITE)
-                self.screen.blit(name_surf, (eq_x + eq_slot_size + 60, eq_y + eq_slot_size // 2 - name_surf.get_height() // 2))
-            eq_y += eq_slot_size + 4
+            self.screen.blit(label, (eq_x + SLOT_SIZE + 6, eq_y + SLOT_SIZE // 2 - label.get_height() // 2))
+            eq_y += SLOT_SIZE + 4
 
-        # Stats below player preview + armor
+        # Stats
         stats_y = cy + preview_size + 20
         section = font.render("Stats", True, GOLD)
         self.screen.blit(section, (left_x, stats_y))
         stats_y += 26
-
         attrs = self.player.get_effective_attrs()
         bonuses = self.inventory.get_equipment_stat_bonuses()
-        stat_order = ['strength', 'dexterity', 'intelligence', 'health']
-        for stat in stat_order:
-            base_val = self.player.base_attrs.get(stat, 0)
-            total_val = attrs.get(stat, 0)
+        for stat in ['strength', 'dexterity', 'intelligence', 'health']:
             b = bonuses.get(stat, 0)
-            bonus_str = ""
-            if b > 0:
-                bonus_str = f"  (+{b})"
-            line = font_sm.render(f"{stat.capitalize()}: {total_val}{bonus_str}", True, WHITE)
+            bonus_str = f"  (+{b})" if b > 0 else ""
+            line = font_sm.render(f"{stat.capitalize()}: {attrs.get(stat, 0)}{bonus_str}", True, WHITE)
             self.screen.blit(line, (left_x + 8, stats_y))
             stats_y += 20
         stats_y += 8
-
-        # Derived stats
         eff_max = self.player.get_effective_max_health()
-        hp_line = font_sm.render(f"HP: {self.player.health} / {eff_max}", True, WHITE)
-        self.screen.blit(hp_line, (left_x + 8, stats_y))
-        stats_y += 20
-        dmg = self.player.get_effective_damage()
-        dmg_line = font_sm.render(f"Damage: {dmg}", True, WHITE)
-        self.screen.blit(dmg_line, (left_x + 8, stats_y))
-        stats_y += 20
-        defense = self.inventory.get_total_defense()
-        def_line = font_sm.render(f"Defense: {defense}", True, WHITE)
-        self.screen.blit(def_line, (left_x + 8, stats_y))
+        for text in [f"HP: {self.player.health} / {eff_max}",
+                     f"Damage: {self.player.get_effective_damage()}",
+                     f"Defense: {self.inventory.get_total_defense()}"]:
+            self.screen.blit(font_sm.render(text, True, WHITE), (left_x + 8, stats_y))
+            stats_y += 20
 
         # --- RIGHT SIDE: inventory grid ---
         inv_cols = INVENTORY_COLS
@@ -466,8 +481,168 @@ class Game:
                 sx = inv_x + col * (SLOT_SIZE + SLOT_GAP)
                 sy = inv_start_y + row * (SLOT_SIZE + SLOT_GAP)
                 slot_data = self.inventory.get_slot(idx)
-                selected = idx < HOTBAR_SLOTS and idx == self.inventory.selected_hotbar_index
-                self.draw_slot(sx, sy, slot_data, selected=selected)
+                is_drag_src = self.inv_dragging and self.inv_dragging[0] == 'inv' and self.inv_dragging[1] == idx
+                is_selected = self.inv_selected == ('inv', idx)
+                is_hotbar = idx < HOTBAR_SLOTS and idx == self.inventory.selected_hotbar_index
+                r = self.draw_slot(sx, sy, slot_data, selected=is_hotbar, highlight=is_selected, dimmed=is_drag_src)
+                self.inv_slot_rects.append((r, 'inv', idx))
+                if r.collidepoint(mouse_pos) and slot_data and not is_drag_src:
+                    hovered_item_id = slot_data[0]
+
+        # --- Drag ghost ---
+        if self.inv_dragging:
+            _, _, drag_item_id, drag_count = self.inv_dragging
+            if drag_item_id in ITEM_DEFS:
+                color = ITEM_DEFS[drag_item_id]['color']
+                ghost_size = SLOT_SIZE - 8
+                gx = mouse_pos[0] - ghost_size // 2
+                gy = mouse_pos[1] - ghost_size // 2
+                ghost = pg.Surface((ghost_size, ghost_size), pg.SRCALPHA)
+                pg.draw.rect(ghost, (*color, 180), (0, 0, ghost_size, ghost_size))
+                self.screen.blit(ghost, (gx, gy))
+                if drag_count > 1:
+                    cnt = font_sm.render(str(drag_count), True, WHITE)
+                    self.screen.blit(cnt, (gx + ghost_size - cnt.get_width(), gy + ghost_size - cnt.get_height()))
+
+        # --- Tooltip ---
+        if hovered_item_id and not self.inv_dragging:
+            self._draw_tooltip(mouse_pos, hovered_item_id, font_tip)
+
+    def _draw_tooltip(self, pos, item_id, font):
+        """Render a multi-line tooltip box next to the cursor."""
+        item = ITEM_DEFS.get(item_id, {})
+        lines = []
+        lines.append(item.get('name', item_id))
+        itype = item.get('type', '')
+        if itype:
+            lines.append(f"Type: {itype.capitalize()}")
+        desc = item.get('description', '')
+        if desc:
+            lines.append(desc)
+        if item.get('base_damage'):
+            lines.append(f"Base Damage: {item['base_damage']}")
+        if item.get('scaling_stat'):
+            lines.append(f"Scales: {item['scaling_stat'].capitalize()} x{item.get('scaling_factor', 0)}")
+        if item.get('defense'):
+            lines.append(f"Defense: {item['defense']}")
+        sb = item.get('stat_bonus', {})
+        if sb:
+            parts = [f"{k.capitalize()} +{v}" for k, v in sb.items()]
+            lines.append("Bonus: " + ", ".join(parts))
+        if item.get('effect'):
+            for ek, ev in item['effect'].items():
+                lines.append(f"Effect: {ek} {ev}")
+
+        rendered = [font.render(l, True, WHITE) for l in lines]
+        name_surf = pg.font.Font(pg.font.match_font('arial'), 15).render(lines[0], True, GOLD) if lines else None
+        if name_surf:
+            rendered[0] = name_surf
+        pad = 8
+        tip_w = max(s.get_width() for s in rendered) + pad * 2
+        tip_h = sum(s.get_height() + 2 for s in rendered) + pad * 2
+        tx = pos[0] + 16
+        ty = pos[1] + 4
+        if tx + tip_w > WIDTH:
+            tx = pos[0] - tip_w - 4
+        if ty + tip_h > HEIGHT:
+            ty = HEIGHT - tip_h - 4
+        bg = pg.Surface((tip_w, tip_h), pg.SRCALPHA)
+        bg.fill((20, 20, 20, 230))
+        self.screen.blit(bg, (tx, ty))
+        pg.draw.rect(self.screen, SLOT_BORDER, (tx, ty, tip_w, tip_h), 1)
+        cy = ty + pad
+        for surf in rendered:
+            self.screen.blit(surf, (tx + pad, cy))
+            cy += surf.get_height() + 2
+
+    def _inv_hit_test(self, pos):
+        """Return (source, index) for the slot under pos, or None."""
+        for rect, source, index in self.inv_slot_rects:
+            if rect.collidepoint(pos):
+                return (source, index)
+        return None
+
+    def _inv_mouse_down(self, event):
+        hit = self._inv_hit_test(event.pos)
+        if hit is None:
+            self.inv_selected = None
+            return
+        source, index = hit
+        if event.button == 1:
+            # Left click: start drag if slot has item, or select
+            if source == 'inv':
+                slot_data = self.inventory.get_slot(index)
+                if slot_data:
+                    self.inv_dragging = (source, index, slot_data[0], slot_data[1])
+                    self.inv_selected = hit
+                else:
+                    self.inv_selected = hit
+            elif source == 'equip':
+                item_id = self.inventory.equipment.get(index)
+                if item_id:
+                    self.inv_dragging = (source, index, item_id, 1)
+                    self.inv_selected = hit
+                else:
+                    self.inv_selected = hit
+        elif event.button == 3:
+            # Right click: equip from inventory, or unequip from equipment
+            if source == 'inv':
+                slot_data = self.inventory.get_slot(index)
+                if slot_data:
+                    item_def = ITEM_DEFS.get(slot_data[0], {})
+                    if item_def.get('slot') in EQUIPMENT_SLOTS:
+                        self.inventory.equip_from_slot(index)
+            elif source == 'equip':
+                self.inventory.unequip(index)
+
+    def _inv_mouse_up(self, event):
+        if event.button != 1 or not self.inv_dragging:
+            self.inv_dragging = None
+            return
+        drag_src, drag_idx, drag_item, drag_count = self.inv_dragging
+        drop_hit = self._inv_hit_test(event.pos)
+        self.inv_dragging = None
+
+        if drop_hit is None:
+            return
+        drop_src, drop_idx = drop_hit
+        if (drag_src, drag_idx) == (drop_src, drop_idx):
+            return
+
+        # Swap logic between inventory slots and equipment slots
+        if drag_src == 'inv' and drop_src == 'inv':
+            # Swap two inventory slots
+            a = self.inventory.get_slot(drag_idx)
+            b = self.inventory.get_slot(drop_idx)
+            self.inventory.slots[drag_idx] = b
+            self.inventory.slots[drop_idx] = a
+        elif drag_src == 'inv' and drop_src == 'equip':
+            item_def = ITEM_DEFS.get(drag_item, {})
+            if item_def.get('slot') == drop_idx:
+                old_eq = self.inventory.equipment.get(drop_idx)
+                self.inventory.equipment[drop_idx] = drag_item
+                if old_eq:
+                    self.inventory.set_slot(drag_idx, old_eq, 1)
+                else:
+                    self.inventory.remove_item(drag_idx, drag_count)
+        elif drag_src == 'equip' and drop_src == 'inv':
+            drop_data = self.inventory.get_slot(drop_idx)
+            if drop_data is None:
+                self.inventory.set_slot(drop_idx, drag_item, 1)
+                self.inventory.equipment[drag_idx] = None
+            else:
+                drop_item_def = ITEM_DEFS.get(drop_data[0], {})
+                if drop_item_def.get('slot') == drag_idx:
+                    self.inventory.equipment[drag_idx] = drop_data[0]
+                    self.inventory.set_slot(drop_idx, drag_item, 1)
+                else:
+                    leftover = self.inventory.add_item(drag_item, 1)
+                    if leftover == 0:
+                        self.inventory.equipment[drag_idx] = None
+        elif drag_src == 'equip' and drop_src == 'equip':
+            if drag_idx == drop_idx:
+                return
+            # Can't swap between different equipment slot types
 
     def draw_text(self, text, size, color, x, y):
         font_name = pg.font.match_font('arial')

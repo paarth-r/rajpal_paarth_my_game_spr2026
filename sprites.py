@@ -136,6 +136,12 @@ class Player(Sprite):
 
     def attack(self):
         now = pg.time.get_ticks()
+        weapon_id = None
+        if hasattr(self.game, 'inventory'):
+            weapon_id = self.game.inventory.equipment.get('weapon')
+        # Cannot attack unarmed.
+        if weapon_id is None:
+            return
         if self.attacking:
             return
         if (now - self.last_attack_end_time) < PLAYER_ATTACK_COOLDOWN_MS:

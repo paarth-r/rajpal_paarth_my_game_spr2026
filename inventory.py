@@ -91,6 +91,16 @@ class Inventory:
     def get_selected_item(self):
         return self.get_hotbar_slot(self.selected_hotbar_index)
 
+    def consume_from_slot(self, slot_index, amount=1):
+        """Consume amount from a slot; return consumed item_id or None."""
+        s = self.get_slot(slot_index)
+        if s is None or amount <= 0:
+            return None
+        item_id, count = s
+        used = min(amount, count)
+        self.remove_item(slot_index, used)
+        return item_id
+
     def equip_from_slot(self, slot_index):
         """Equip item from inventory slot. Swaps with currently equipped if slot occupied."""
         s = self.get_slot(slot_index)
@@ -151,7 +161,7 @@ class Inventory:
         Strength always contributes a multiplier; the weapon's scaling_stat adds flat bonus."""
         weapon_id = self.equipment.get('weapon')
         if weapon_id is None:
-            return PLAYER_ATTACK_DAMAGE
+            return 0
         weapon = ITEM_DEFS.get(weapon_id, {})
         base = weapon.get('base_damage', PLAYER_ATTACK_DAMAGE)
         strength = player_attrs.get('strength', 0)
