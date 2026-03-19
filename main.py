@@ -5,6 +5,7 @@ Main file responsible for game loop including input, update, and draw methods.
 import pygame as pg
 import sys
 import json
+import os
 from os import path
 from settings import *
 from sprites import *
@@ -29,11 +30,15 @@ class Game:
         self.game_dir = path.dirname(__file__)
         self.img_dir = path.join(self.game_dir, 'images')
         self.levels_dir = path.join(self.game_dir, 'levels')
-        self.save_path = path.join(self.game_dir, 'save_inventory.json')
+        self.saves_dir = path.join(self.game_dir, 'saves')
+        self.active_save_path = path.join(self.saves_dir, 'active_world.txt')
         self.wall_img = pg.image.load(path.join(self.img_dir, 'wall_art.png')).convert_alpha()
-        self.level_order = ['level1.txt', 'level2.txt']
+        self.level_order = ['level1.txt', 'level2.txt', 'level3.txt']
         self.current_level_name = self.level_order[0]
+        self.current_save_name = None
+        self.save_path = None
         self.mob_states_by_level = {}
+        self.init_save_system()
         self._load_world_state_from_save()
         self.load_level(self.current_level_name, create_player=True)
 
@@ -59,17 +64,7 @@ class Game:
 
     def new(self):
         self.load_data()
-        self.inventory = Inventory(INVENTORY_SLOTS, HOTBAR_SLOTS)
-        loaded = self.load_inventory_state()
-        if not loaded:
-            self.inventory.add_item('gold_coin', 5)
-            self.inventory.add_item('health_potion', 2)
-            # Starting gear: gladius + legionnaire armor set (equip directly)
-            self.inventory.equipment['weapon'] = 'gladius'
-            self.inventory.equipment['head'] = 'legion_helm'
-            self.inventory.equipment['chest'] = 'legion_cuirass'
-            self.inventory.equipment['boots'] = 'legion_boots'
-            self.save_inventory_state()
+        self._initialize_player_inventory()
         self.inventory_open = False
         self.manual_target = None
         # Inventory UI state
@@ -82,10 +77,65 @@ class Game:
         self.pause_quit_title_btn_rect = None
         self.pause_resume_btn_rect = None
         self.title_start_btn_rect = None
+        self.title_new_world_btn_rect = None
         self.title_quit_btn_rect = None
         self.respawn_button_rect = None
         self.state = 'intro'
         self.run()
+
+    def init_save_system(self):
+        """Set up saves folder and choose active world save."""
+        os.makedirs(self.saves_dir, exist_ok=True)
+        legacy_save = path.join(self.game_dir, 'save_inventory.json')
+        legacy_target = path.join(self.saves_dir, 'world_001.json')
+        if path.exists(legacy_save) and not path.exists(legacy_target):
+            try:
+                with open(legacy_save, 'r') as src:
+                    payload = json.load(src)
+                with open(legacy_target, 'w') as dst:
+                    json.dump(payload, dst, indent=2)
+            except Exception:
+                pass
+        saves = sorted([f for f in os.listdir(self.saves_dir) if f.endswith('.json')])
+        active = None
+        if path.exists(self.active_save_path):
+            try:
+                with open(self.active_save_path, 'r') as f:
+                    name = f.read().strip()
+                if name in saves:
+                    active = name
+            except Exception:
+                active = None
+        if active is None:
+            if saves:
+                active = saves[0]
+            else:
+                active = 'world_001.json'
+        self.set_active_world(active)
+
+    def set_active_world(self, save_name):
+        self.current_save_name = save_name
+        self.save_path = path.join(self.saves_dir, save_name)
+        try:
+            with open(self.active_save_path, 'w') as f:
+                f.write(save_name)
+        except Exception:
+            pass
+
+    def _initialize_player_inventory(self):
+        """Load active world inventory or create default new-world inventory."""
+        self.inventory = Inventory(INVENTORY_SLOTS, HOTBAR_SLOTS)
+        loaded = self.load_inventory_state()
+        if loaded:
+            return
+        self.inventory.add_item('gold_coin', 5)
+        self.inventory.add_item('health_potion', 2)
+        # Starting gear: gladius + legionnaire armor set (equip directly)
+        self.inventory.equipment['weapon'] = 'gladius'
+        self.inventory.equipment['head'] = 'legion_helm'
+        self.inventory.equipment['chest'] = 'legion_cuirass'
+        self.inventory.equipment['boots'] = 'legion_boots'
+        self.save_inventory_state()
 
     def _load_world_state_from_save(self):
         """Load world-level state from save (current level + mobs)."""
@@ -103,6 +153,29 @@ class Game:
         except Exception:
             pass
 
+    def create_new_world(self):
+        """Create a new save world and start from fresh defaults."""
+        saves = [f for f in os.listdir(self.saves_dir) if f.endswith('.json')]
+        nums = []
+        for s in saves:
+            if s.startswith('world_') and s.endswith('.json'):
+                stem = s[len('world_'):-len('.json')]
+                if stem.isdigit():
+                    nums.append(int(stem))
+        next_num = (max(nums) + 1) if nums else 1
+        new_name = f"world_{next_num:03d}.json"
+        self.set_active_world(new_name)
+        self.current_level_name = self.level_order[0]
+        self.mob_states_by_level = {}
+        self.load_level(self.current_level_name, create_player=True)
+        self._initialize_player_inventory()
+        self.pause_menu_open = False
+        self.inventory_open = False
+        self.inv_dragging = None
+        self.inv_selected = None
+        self.manual_target = None
+        self.state = 'playing'
+
     def load_level(self, level_name, create_player=False):
         """Build map/entities for a level; keep player instance when transitioning."""
         self.current_level_name = level_name
@@ -116,7 +189,8 @@ class Game:
         self.all_mobs = pg.sprite.Group()
         self.all_drops = pg.sprite.Group()
         self.checkpoint_tile = None
-        self.level_exit_tile = None
+        self.level_exit_tiles = []
+        self.level_return_tiles = []
         player_spawn = None
         default_mob_spawns = []
 
@@ -131,7 +205,9 @@ class Game:
                 elif tile == 'K':
                     self.checkpoint_tile = (col, row)
                 elif tile == 'N':
-                    self.level_exit_tile = (col, row)
+                    self.level_exit_tiles.append((col, row))
+                elif tile == 'R':
+                    self.level_return_tiles.append((col, row))
                 elif tile == 'M':
                     default_mob_spawns.append((col, row))
 
@@ -197,6 +273,8 @@ class Game:
                 if self.state == 'intro':
                     if event.key == pg.K_RETURN:
                         self.state = 'playing'
+                    if event.key == pg.K_n:
+                        self.create_new_world()
                     continue
                 if self.state == 'death':
                     continue
@@ -251,6 +329,8 @@ class Game:
                 if self.state == 'intro':
                     if self.title_start_btn_rect and self.title_start_btn_rect.collidepoint(event.pos):
                         self.state = 'playing'
+                    elif self.title_new_world_btn_rect and self.title_new_world_btn_rect.collidepoint(event.pos):
+                        self.create_new_world()
                     elif self.title_quit_btn_rect and self.title_quit_btn_rect.collidepoint(event.pos):
                         self.save_inventory_state()
                         self.running = False
@@ -372,10 +452,13 @@ class Game:
             if best is not None:
                 best.hurt(self.player.get_effective_damage())
                 self.player.attack_hit_dealt = True
-        if self.level_exit_open and self.level_exit_tile is not None:
-            if (self.player.tile_x, self.player.tile_y) == self.level_exit_tile:
-                self.go_to_next_level()
-                return
+        player_tile = (self.player.tile_x, self.player.tile_y)
+        if player_tile in self.level_return_tiles:
+            self.go_to_prev_level()
+            return
+        if self.level_exit_open and player_tile in self.level_exit_tiles:
+            self.go_to_next_level()
+            return
         self.camera.update(self.player)
 
     def draw(self):
@@ -404,9 +487,9 @@ class Game:
             cp_screen = self.camera.apply_rect(cp_rect)
             pg.draw.rect(self.screen, (60, 120, 220), cp_screen)
             pg.draw.rect(self.screen, WHITE, cp_screen, 2)
-        # Exit tile: locked looks like wall; unlocked becomes purple doorway.
-        if self.level_exit_tile is not None:
-            ex_rect = pg.Rect(self.level_exit_tile[0] * TILESIZE, self.level_exit_tile[1] * TILESIZE, TILESIZE, TILESIZE)
+        # Forward exits: locked looks like wall; unlocked becomes purple doorway.
+        for ex_tile in self.level_exit_tiles:
+            ex_rect = pg.Rect(ex_tile[0] * TILESIZE, ex_tile[1] * TILESIZE, TILESIZE, TILESIZE)
             ex_screen = self.camera.apply_rect(ex_rect)
             if self.level_exit_open:
                 pg.draw.rect(self.screen, (145, 60, 210), ex_screen)
@@ -414,6 +497,12 @@ class Game:
             else:
                 wall_scaled = pg.transform.scale(self.wall_img, (ex_screen.width, ex_screen.height))
                 self.screen.blit(wall_scaled, ex_screen)
+        # Return exits are always open (teal doorway).
+        for ret_tile in self.level_return_tiles:
+            rt_rect = pg.Rect(ret_tile[0] * TILESIZE, ret_tile[1] * TILESIZE, TILESIZE, TILESIZE)
+            rt_screen = self.camera.apply_rect(rt_rect)
+            pg.draw.rect(self.screen, (40, 170, 170), rt_screen)
+            pg.draw.rect(self.screen, WHITE, rt_screen, 2)
         # Draw path preview: outlined tiles for queued moves
         path_tiles = self.player.get_path_tiles()
         path_rect = pg.Rect(0, 0, TILESIZE, TILESIZE)
@@ -581,10 +670,29 @@ class Game:
         self.camera.update(self.player)
         self.save_inventory_state()
 
+    def go_to_prev_level(self):
+        """Transition through return exit to previous level."""
+        try:
+            idx = self.level_order.index(self.current_level_name)
+        except ValueError:
+            idx = 0
+        if idx <= 0:
+            return
+        self.mob_states_by_level[self.current_level_name] = self._snapshot_current_level_mobs()
+        prev_level = self.level_order[idx - 1]
+        self.load_level(prev_level, create_player=False)
+        self.pause_menu_open = False
+        self.inventory_open = False
+        self.inv_dragging = None
+        self.inv_selected = None
+        self.manual_target = None
+        self.camera.update(self.player)
+        self.save_inventory_state()
+
     def draw_intro(self):
         """Menu-style title screen with interactive buttons."""
         self.screen.fill((8, 8, 12))
-        panel_w, panel_h = 620, 420
+        panel_w, panel_h = 620, 540
         panel_x = (WIDTH - panel_w) // 2
         panel_y = (HEIGHT - panel_h) // 2
         pg.draw.rect(self.screen, (25, 25, 35), (panel_x, panel_y, panel_w, panel_h))
@@ -594,16 +702,22 @@ class Game:
         font_tag = pg.font.Font(pg.font.match_font('arial'), 24)
         font_btn = pg.font.Font(pg.font.match_font('arial'), 28)
         font_hint = pg.font.Font(pg.font.match_font('arial'), 16)
+        font_world = pg.font.Font(pg.font.match_font('arial'), 18)
         title_surf = font_title.render(TITLE, True, WHITE)
         tag_surf = font_tag.render("Descend. Discover. Survive.", True, DARKGRAY)
         self.screen.blit(title_surf, title_surf.get_rect(center=(WIDTH // 2, panel_y + 92)))
         self.screen.blit(tag_surf, tag_surf.get_rect(center=(WIDTH // 2, panel_y + 145)))
+        if self.current_save_name:
+            world_surf = font_world.render(f"Active world: {self.current_save_name}", True, GOLD)
+            self.screen.blit(world_surf, world_surf.get_rect(center=(WIDTH // 2, panel_y + 176)))
 
         btn_w, btn_h = 300, 62
-        self.title_start_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 210, btn_w, btn_h)
-        self.title_quit_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 292, btn_w, btn_h)
+        self.title_start_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 220, btn_w, btn_h)
+        self.title_new_world_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 300, btn_w, btn_h)
+        self.title_quit_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 380, btn_w, btn_h)
         for rect, text in (
             (self.title_start_btn_rect, "Start / Continue"),
+            (self.title_new_world_btn_rect, "New World"),
             (self.title_quit_btn_rect, "Quit"),
         ):
             hover = rect.collidepoint(pg.mouse.get_pos())
@@ -613,7 +727,7 @@ class Game:
             surf = font_btn.render(text, True, WHITE)
             self.screen.blit(surf, surf.get_rect(center=rect.center))
 
-        hint = font_hint.render("Click a button or press Enter to start", True, GOLD)
+        hint = font_hint.render("Click a button, Enter=Continue, N=New World", True, GOLD)
         self.screen.blit(hint, hint.get_rect(center=(WIDTH // 2, panel_y + panel_h - 26)))
         self.display.blit(self.screen, (0, 0))
         pg.display.flip()
