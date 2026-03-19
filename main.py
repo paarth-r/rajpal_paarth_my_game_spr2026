@@ -4,6 +4,7 @@ Main file responsible for game loop including input, update, and draw methods.
 
 import pygame as pg
 import sys
+import json
 from os import path
 from settings import *
 from sprites import *
@@ -27,6 +28,7 @@ class Game:
     def load_data(self):
         self.game_dir = path.dirname(__file__)
         self.img_dir = path.join(self.game_dir, 'images')
+        self.save_path = path.join(self.game_dir, 'save_inventory.json')
         self.wall_img = pg.image.load(path.join(self.img_dir, 'wall_art.png')).convert_alpha()
         self.map = Map(path.join(self.game_dir, 'level1.txt'))
 
@@ -57,6 +59,7 @@ class Game:
         self.all_walls = pg.sprite.Group()
         self.all_mobs = pg.sprite.Group()
         self.all_drops = pg.sprite.Group()
+        self.checkpoint_tile = None
 
         for row, tiles in enumerate(self.map.data):
             for col, tile in enumerate(tiles):
@@ -64,18 +67,25 @@ class Game:
                     Wall(self, col, row)
                 if tile == 'P':
                     self.player = Player(self, col, row)
+                    if self.checkpoint_tile is None:
+                        self.checkpoint_tile = (col, row)
+                if tile == 'K':
+                    self.checkpoint_tile = (col, row)
                 if tile == 'M':
                     Mob(self, col, row)
 
         self.camera = Camera(self.map.width, self.map.height)
         self.inventory = Inventory(INVENTORY_SLOTS, HOTBAR_SLOTS)
-        self.inventory.add_item('gold_coin', 5)
-        self.inventory.add_item('health_potion', 2)
-        # Starting gear: gladius + legionnaire armor set (equip directly)
-        self.inventory.equipment['weapon'] = 'gladius'
-        self.inventory.equipment['head'] = 'legion_helm'
-        self.inventory.equipment['chest'] = 'legion_cuirass'
-        self.inventory.equipment['boots'] = 'legion_boots'
+        loaded = self.load_inventory_state()
+        if not loaded:
+            self.inventory.add_item('gold_coin', 5)
+            self.inventory.add_item('health_potion', 2)
+            # Starting gear: gladius + legionnaire armor set (equip directly)
+            self.inventory.equipment['weapon'] = 'gladius'
+            self.inventory.equipment['head'] = 'legion_helm'
+            self.inventory.equipment['chest'] = 'legion_cuirass'
+            self.inventory.equipment['boots'] = 'legion_boots'
+            self.save_inventory_state()
         self.inventory_open = False
         self.manual_target = None
         # Inventory UI state
@@ -83,6 +93,13 @@ class Game:
         self.inv_dragging = None    # (source, index, item_id, count) while dragging
         self.inv_drag_offset = (0, 0)
         self.inv_selected = None    # (source, index) for click-highlight
+        self.pause_menu_open = False
+        self.pause_save_btn_rect = None
+        self.pause_quit_title_btn_rect = None
+        self.pause_resume_btn_rect = None
+        self.title_start_btn_rect = None
+        self.title_quit_btn_rect = None
+        self.respawn_button_rect = None
         self.state = 'intro'
         self.run()
 
@@ -92,22 +109,39 @@ class Game:
             self.events()
             if self.state == 'intro':
                 self.draw_intro()
+            elif self.state == 'death':
+                self.draw_death()
             else:
-                if not self.inventory_open:
+                if not self.inventory_open and not self.pause_menu_open:
                     self.update()
                 self.draw()
 
     def events(self):
         for event in pg.event.get():
             if event.type == pg.QUIT:
+                self.save_inventory_state()
                 if self.playing:
                     self.playing = False
                 self.running = False
             if event.type == pg.KEYDOWN:
                 if self.state == 'intro':
-                    self.state = 'playing'
+                    if event.key == pg.K_RETURN:
+                        self.state = 'playing'
+                    continue
+                if self.state == 'death':
                     continue
                 if self.state != 'playing':
+                    continue
+                if event.key == pg.K_ESCAPE:
+                    if self.pause_menu_open:
+                        self.pause_menu_open = False
+                    else:
+                        self.pause_menu_open = True
+                        self.inventory_open = False
+                        self.inv_dragging = None
+                        self.inv_selected = None
+                    continue
+                if self.pause_menu_open:
                     continue
                 if self.inventory_open:
                     if event.key in (INVENTORY_KEY, CHARACTER_KEY, pg.K_ESCAPE):
@@ -144,6 +178,28 @@ class Game:
                     self._inv_mouse_up(event)
                     continue
             if event.type == pg.MOUSEBUTTONDOWN and event.button == 1:
+                if self.state == 'intro':
+                    if self.title_start_btn_rect and self.title_start_btn_rect.collidepoint(event.pos):
+                        self.state = 'playing'
+                    elif self.title_quit_btn_rect and self.title_quit_btn_rect.collidepoint(event.pos):
+                        self.save_inventory_state()
+                        self.running = False
+                    continue
+                if self.state == 'death':
+                    if self.respawn_button_rect and self.respawn_button_rect.collidepoint(event.pos):
+                        self.respawn_player()
+                    continue
+                if self.state == 'playing' and self.pause_menu_open:
+                    if self.pause_save_btn_rect and self.pause_save_btn_rect.collidepoint(event.pos):
+                        self.save_inventory_state()
+                    elif self.pause_quit_title_btn_rect and self.pause_quit_title_btn_rect.collidepoint(event.pos):
+                        self.save_inventory_state()
+                        self.pause_menu_open = False
+                        self.inventory_open = False
+                        self.state = 'intro'
+                    elif self.pause_resume_btn_rect and self.pause_resume_btn_rect.collidepoint(event.pos):
+                        self.pause_menu_open = False
+                    continue
                 if self.state != 'playing' or self.inventory_open:
                     continue
                 self._handle_click_target(event.pos)
@@ -151,34 +207,77 @@ class Game:
     def quit(self):
         pass
 
+    def save_inventory_state(self):
+        """Persist inventory slots, equipment, and selected hotbar index."""
+        try:
+            slots = []
+            for slot in self.inventory.slots:
+                if slot is None:
+                    slots.append(None)
+                else:
+                    slots.append([slot[0], slot[1]])
+            payload = {
+                'slots': slots,
+                'equipment': dict(self.inventory.equipment),
+                'selected_hotbar_index': int(self.inventory.selected_hotbar_index),
+                'player_health': int(self.player.health),
+            }
+            with open(self.save_path, 'w') as f:
+                json.dump(payload, f, indent=2)
+            return True
+        except Exception:
+            return False
+
+    def load_inventory_state(self):
+        """Load inventory state from disk. Returns True if loaded successfully."""
+        if not path.exists(self.save_path):
+            return False
+        try:
+            with open(self.save_path, 'r') as f:
+                payload = json.load(f)
+            slots = payload.get('slots', [])
+            for i in range(min(len(slots), self.inventory.num_slots)):
+                s = slots[i]
+                if s is None:
+                    self.inventory.slots[i] = None
+                    continue
+                if not isinstance(s, list) or len(s) != 2:
+                    continue
+                item_id, count = s
+                if item_id in ITEM_DEFS and isinstance(count, int) and count > 0:
+                    self.inventory.slots[i] = (item_id, count)
+            eq = payload.get('equipment', {})
+            for slot_name in EQUIPMENT_SLOTS:
+                item_id = eq.get(slot_name)
+                if item_id in ITEM_DEFS:
+                    self.inventory.equipment[slot_name] = item_id
+                else:
+                    self.inventory.equipment[slot_name] = None
+            idx = int(payload.get('selected_hotbar_index', 0))
+            self.inventory.selected_hotbar_index = max(0, min(self.inventory.hotbar_size - 1, idx))
+            saved_hp = payload.get('player_health')
+            if isinstance(saved_hp, int):
+                max_hp = self.player.get_effective_max_health()
+                self.player.health = max(0, min(saved_hp, max_hp))
+            return True
+        except Exception:
+            return False
+
     def update(self):
         self.all_sprites.update()
+        if self.player.health <= 0:
+            self.state = 'death'
+            self.inventory_open = False
+            self.inv_dragging = None
+            self.inv_selected = None
+            return
         # Keep manual target valid
         if self.manual_target is not None:
             if (not self.manual_target.alive()) or getattr(self.manual_target, 'state', None) == 'dead':
                 self.manual_target = None
         # Player attack: auto-target one attackable entity within range (regardless of facing)
         if self.player.attacking and not self.player.attack_hit_dealt:
-            px, py = self.player.hit_rect.centerx, self.player.hit_rect.centery
-            best = None
-            best_d_sq = PLAYER_ATTACK_RANGE * PLAYER_ATTACK_RANGE
-            # Manual target overrides auto-target if it is valid and in range.
-            if self.manual_target is not None:
-                mx = self.manual_target.hit_rect.centerx
-                my = self.manual_target.hit_rect.centery
-                d_sq = (px - mx) ** 2 + (py - my) ** 2
-                if d_sq <= best_d_sq:
-                    best = self.manual_target
-            if best is None:
-                for mob in self.all_mobs:
-                    if getattr(mob, 'state', None) == 'dead':
-                        continue
-                    mx = mob.hit_rect.centerx
-                    my = mob.hit_rect.centery
-                    d_sq = (px - mx) ** 2 + (py - my) ** 2
-                    if d_sq <= best_d_sq:
-                        best_d_sq = d_sq
-                        best = mob
+            best = self._get_best_attack_target()
             if best is not None:
                 best.hurt(self.player.get_effective_damage())
                 self.player.attack_hit_dealt = True
@@ -204,6 +303,12 @@ class Game:
                     pg.draw.line(view_surf, GRID_COLOR, (0, sy), (view_w, sy))
             scaled_map = pg.transform.scale(view_surf, (WIDTH, HEIGHT))
             self.screen.blit(scaled_map, (0, 0))
+        # Checkpoint tile marker
+        if self.checkpoint_tile is not None:
+            cp_rect = pg.Rect(self.checkpoint_tile[0] * TILESIZE, self.checkpoint_tile[1] * TILESIZE, TILESIZE, TILESIZE)
+            cp_screen = self.camera.apply_rect(cp_rect)
+            pg.draw.rect(self.screen, (60, 120, 220), cp_screen)
+            pg.draw.rect(self.screen, WHITE, cp_screen, 2)
         # Draw path preview: outlined tiles for queued moves
         path_tiles = self.player.get_path_tiles()
         path_rect = pg.Rect(0, 0, TILESIZE, TILESIZE)
@@ -240,11 +345,12 @@ class Game:
                 if max_hp > 0:
                     fill_w = max(1, int(bar_w * sprite.health / max_hp))
                     self.screen.fill(HP_BAR_FG, (bar_x, bar_y, fill_w, bar_h))
-        # Click-target selector: green if in attack range, red if out of range
-        if self.manual_target is not None and self.manual_target.alive() and getattr(self.manual_target, 'state', None) != 'dead':
-            target_rect = self.camera.apply(self.manual_target).inflate(8, 8)
+        # Target selector: shows manual target, or current auto-target if no manual one.
+        selected_target = self._get_best_attack_target()
+        if selected_target is not None and selected_target.alive() and getattr(selected_target, 'state', None) != 'dead':
+            target_rect = self.camera.apply(selected_target).inflate(8, 8)
             px, py = self.player.hit_rect.centerx, self.player.hit_rect.centery
-            mx, my = self.manual_target.hit_rect.centerx, self.manual_target.hit_rect.centery
+            mx, my = selected_target.hit_rect.centerx, selected_target.hit_rect.centery
             d_sq = (px - mx) ** 2 + (py - my) ** 2
             in_range = d_sq <= PLAYER_ATTACK_RANGE * PLAYER_ATTACK_RANGE
             outline_color = GREEN if in_range else RED
@@ -273,24 +379,117 @@ class Game:
         self.draw_hotbar()
         if self.inventory_open:
             self.draw_inventory()
+        if self.pause_menu_open:
+            self.draw_pause_menu()
         self.display.blit(self.screen, (0, 0))
         pg.display.flip()
 
+    def draw_death(self):
+        """Death screen shown before respawning."""
+        self.screen.fill((10, 0, 0))
+        title_font = pg.font.Font(pg.font.match_font('arial'), 64)
+        msg_font = pg.font.Font(pg.font.match_font('arial'), 24)
+        btn_font = pg.font.Font(pg.font.match_font('arial'), 28)
+        title = title_font.render("You Died", True, RED)
+        msg = msg_font.render("The dungeon has claimed you... for now.", True, WHITE)
+        self.screen.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 120)))
+        self.screen.blit(msg, msg.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60)))
+        btn_w, btn_h = 240, 60
+        btn_x = WIDTH // 2 - btn_w // 2
+        btn_y = HEIGHT // 2 + 20
+        self.respawn_button_rect = pg.Rect(btn_x, btn_y, btn_w, btn_h)
+        mouse_over = self.respawn_button_rect.collidepoint(pg.mouse.get_pos())
+        btn_color = (160, 30, 30) if mouse_over else (120, 20, 20)
+        pg.draw.rect(self.screen, btn_color, self.respawn_button_rect)
+        pg.draw.rect(self.screen, WHITE, self.respawn_button_rect, 2)
+        btn_text = btn_font.render("Respawn", True, WHITE)
+        self.screen.blit(btn_text, btn_text.get_rect(center=self.respawn_button_rect.center))
+        self.display.blit(self.screen, (0, 0))
+        pg.display.flip()
+
+    def draw_pause_menu(self):
+        """ESC pause menu with save options."""
+        overlay = pg.Surface((WIDTH, HEIGHT), pg.SRCALPHA)
+        overlay.fill((0, 0, 0, 170))
+        self.screen.blit(overlay, (0, 0))
+        title_font = pg.font.Font(pg.font.match_font('arial'), 48)
+        btn_font = pg.font.Font(pg.font.match_font('arial'), 24)
+        title = title_font.render("Paused", True, WHITE)
+        self.screen.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 140)))
+
+        btn_w, btn_h = 320, 56
+        x = WIDTH // 2 - btn_w // 2
+        y0 = HEIGHT // 2 - 50
+        self.pause_save_btn_rect = pg.Rect(x, y0, btn_w, btn_h)
+        self.pause_quit_title_btn_rect = pg.Rect(x, y0 + 72, btn_w, btn_h)
+        self.pause_resume_btn_rect = pg.Rect(x, y0 + 144, btn_w, btn_h)
+        for rect, text in (
+            (self.pause_save_btn_rect, "Save Game"),
+            (self.pause_quit_title_btn_rect, "Save & Quit to Title"),
+            (self.pause_resume_btn_rect, "Resume"),
+        ):
+            hover = rect.collidepoint(pg.mouse.get_pos())
+            color = (80, 80, 80) if hover else (55, 55, 55)
+            pg.draw.rect(self.screen, color, rect)
+            pg.draw.rect(self.screen, WHITE, rect, 2)
+            surf = btn_font.render(text, True, WHITE)
+            self.screen.blit(surf, surf.get_rect(center=rect.center))
+
+    def respawn_player(self):
+        """Respawn player at checkpoint and return to gameplay."""
+        if self.checkpoint_tile is None:
+            self.checkpoint_tile = (self.player.tile_x, self.player.tile_y)
+        cx, cy = self.checkpoint_tile
+        self.player.clear_move_queue()
+        self.player.move_state = 'idle'
+        self.player.slide_from = None
+        self.player.slide_to = None
+        self.player.slide_to_tile = None
+        self.player.attacking = False
+        self.player.attack_hit_dealt = False
+        self.player.tile_x, self.player.tile_y = cx, cy
+        self.player.pos = vec(cx * TILESIZE + TILESIZE / 2, cy * TILESIZE + TILESIZE / 2)
+        self.player.hit_rect.center = self.player.pos
+        self.player.rect.center = self.player.hit_rect.center
+        self.player.max_health = self.player.get_effective_max_health()
+        self.player.health = self.player.max_health
+        self.manual_target = None
+        self.state = 'playing'
+
     def draw_intro(self):
-        """Title screen: Relictus, tagline, prompt to start."""
-        self.screen.fill(BGCOLOR)
-        font_title = pg.font.Font(pg.font.match_font('arial'), INTRO_TITLE_SIZE)
-        font_tag = pg.font.Font(pg.font.match_font('arial'), INTRO_TAGLINE_SIZE)
-        font_prompt = pg.font.Font(pg.font.match_font('arial'), INTRO_PROMPT_SIZE)
+        """Menu-style title screen with interactive buttons."""
+        self.screen.fill((8, 8, 12))
+        panel_w, panel_h = 620, 420
+        panel_x = (WIDTH - panel_w) // 2
+        panel_y = (HEIGHT - panel_h) // 2
+        pg.draw.rect(self.screen, (25, 25, 35), (panel_x, panel_y, panel_w, panel_h))
+        pg.draw.rect(self.screen, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
+
+        font_title = pg.font.Font(pg.font.match_font('arial'), 72)
+        font_tag = pg.font.Font(pg.font.match_font('arial'), 24)
+        font_btn = pg.font.Font(pg.font.match_font('arial'), 28)
+        font_hint = pg.font.Font(pg.font.match_font('arial'), 16)
         title_surf = font_title.render(TITLE, True, WHITE)
-        tag_surf = font_tag.render(INTRO_TAGLINE, True, DARKGRAY)
-        prompt_surf = font_prompt.render(INTRO_PROMPT, True, GOLD)
-        title_rect = title_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60))
-        tag_rect = tag_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 10))
-        prompt_rect = prompt_surf.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 80))
-        self.screen.blit(title_surf, title_rect)
-        self.screen.blit(tag_surf, tag_rect)
-        self.screen.blit(prompt_surf, prompt_rect)
+        tag_surf = font_tag.render("Descend. Discover. Survive.", True, DARKGRAY)
+        self.screen.blit(title_surf, title_surf.get_rect(center=(WIDTH // 2, panel_y + 92)))
+        self.screen.blit(tag_surf, tag_surf.get_rect(center=(WIDTH // 2, panel_y + 145)))
+
+        btn_w, btn_h = 300, 62
+        self.title_start_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 210, btn_w, btn_h)
+        self.title_quit_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 292, btn_w, btn_h)
+        for rect, text in (
+            (self.title_start_btn_rect, "Start / Continue"),
+            (self.title_quit_btn_rect, "Quit"),
+        ):
+            hover = rect.collidepoint(pg.mouse.get_pos())
+            color = (90, 90, 110) if hover else (60, 60, 80)
+            pg.draw.rect(self.screen, color, rect)
+            pg.draw.rect(self.screen, WHITE, rect, 2)
+            surf = font_btn.render(text, True, WHITE)
+            self.screen.blit(surf, surf.get_rect(center=rect.center))
+
+        hint = font_hint.render("Click a button or press Enter to start", True, GOLD)
+        self.screen.blit(hint, hint.get_rect(center=(WIDTH // 2, panel_y + panel_h - 26)))
         self.display.blit(self.screen, (0, 0))
         pg.display.flip()
 
@@ -669,6 +868,29 @@ class Game:
             self.manual_target = clicked[0][1]
         else:
             self.manual_target = None
+
+    def _get_best_attack_target(self):
+        """Return manual target if valid/in-range, else nearest in-range live mob."""
+        px, py = self.player.hit_rect.centerx, self.player.hit_rect.centery
+        best = None
+        best_d_sq = PLAYER_ATTACK_RANGE * PLAYER_ATTACK_RANGE
+        if self.manual_target is not None:
+            if self.manual_target.alive() and getattr(self.manual_target, 'state', None) != 'dead':
+                mx = self.manual_target.hit_rect.centerx
+                my = self.manual_target.hit_rect.centery
+                d_sq = (px - mx) ** 2 + (py - my) ** 2
+                if d_sq <= best_d_sq:
+                    return self.manual_target
+        for mob in self.all_mobs:
+            if getattr(mob, 'state', None) == 'dead':
+                continue
+            mx = mob.hit_rect.centerx
+            my = mob.hit_rect.centery
+            d_sq = (px - mx) ** 2 + (py - my) ** 2
+            if d_sq <= best_d_sq:
+                best_d_sq = d_sq
+                best = mob
+        return best
 
 
 if __name__ == "__main__":

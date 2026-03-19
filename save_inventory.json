@@ -1,0 +1,43 @@
+{
+  "slots": [
+    [
+      "gold_coin",
+      13
+    ],
+    null,
+    [
+      "gladius",
+      1
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "equipment": {
+    "weapon": "stone_hammer",
+    "head": "legion_helm",
+    "chest": "legion_cuirass",
+    "boots": "legion_boots",
+    "shield": null
+  },
+  "selected_hotbar_index": 1,
+  "player_health": 150
+}
