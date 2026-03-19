@@ -1,0 +1,90 @@
+{
+  "slots": [
+    [
+      "gold_coin",
+      5
+    ],
+    [
+      "health_potion",
+      2
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "equipment": {
+    "weapon": "gladius",
+    "head": "legion_helm",
+    "chest": "legion_cuirass",
+    "boots": "legion_boots",
+    "shield": null
+  },
+  "selected_hotbar_index": 0,
+  "player_health": 100,
+  "current_level": "level1.txt",
+  "mob_states": {
+    "level1.txt": [
+      {
+        "tile_x": 6,
+        "tile_y": 1,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 2,
+        "tile_y": 3,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 18,
+        "tile_y": 6,
+        "health": 200,
+        "state": "walk",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 26,
+        "tile_y": 7,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 21,
+        "tile_y": 20,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 20,
+        "tile_y": 21,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      }
+    ]
+  }
+}

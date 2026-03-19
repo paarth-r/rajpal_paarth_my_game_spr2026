@@ -78,7 +78,10 @@ class Game:
         self.pause_resume_btn_rect = None
         self.title_start_btn_rect = None
         self.title_new_world_btn_rect = None
+        self.title_choose_save_btn_rect = None
         self.title_quit_btn_rect = None
+        self.save_picker_open = False
+        self.save_picker_slot_rects = []
         self.respawn_button_rect = None
         self.state = 'intro'
         self.run()
@@ -176,6 +179,28 @@ class Game:
         self.manual_target = None
         self.state = 'playing'
 
+    def list_save_files(self):
+        """Return sorted list of world save filenames."""
+        return sorted([f for f in os.listdir(self.saves_dir) if f.endswith('.json')])
+
+    def select_world(self, save_name):
+        """Switch active world and load its state while staying in title menu."""
+        if save_name not in self.list_save_files():
+            return False
+        self.set_active_world(save_name)
+        self.current_level_name = self.level_order[0]
+        self.mob_states_by_level = {}
+        self._load_world_state_from_save()
+        self.load_level(self.current_level_name, create_player=True)
+        self._initialize_player_inventory()
+        self.pause_menu_open = False
+        self.inventory_open = False
+        self.inv_dragging = None
+        self.inv_selected = None
+        self.manual_target = None
+        self.save_picker_open = False
+        return True
+
     def load_level(self, level_name, create_player=False):
         """Build map/entities for a level; keep player instance when transitioning."""
         self.current_level_name = level_name
@@ -271,10 +296,15 @@ class Game:
                 self.running = False
             if event.type == pg.KEYDOWN:
                 if self.state == 'intro':
+                    if event.key == pg.K_ESCAPE and self.save_picker_open:
+                        self.save_picker_open = False
+                        continue
                     if event.key == pg.K_RETURN:
                         self.state = 'playing'
                     if event.key == pg.K_n:
                         self.create_new_world()
+                    if event.key == pg.K_s:
+                        self.save_picker_open = not self.save_picker_open
                     continue
                 if self.state == 'death':
                     continue
@@ -327,10 +357,22 @@ class Game:
                     continue
             if event.type == pg.MOUSEBUTTONDOWN and event.button == 1:
                 if self.state == 'intro':
+                    if self.save_picker_open:
+                        hit = False
+                        for rect, save_name in self.save_picker_slot_rects:
+                            if rect.collidepoint(event.pos):
+                                self.select_world(save_name)
+                                hit = True
+                                break
+                        if not hit:
+                            self.save_picker_open = False
+                        continue
                     if self.title_start_btn_rect and self.title_start_btn_rect.collidepoint(event.pos):
                         self.state = 'playing'
                     elif self.title_new_world_btn_rect and self.title_new_world_btn_rect.collidepoint(event.pos):
                         self.create_new_world()
+                    elif self.title_choose_save_btn_rect and self.title_choose_save_btn_rect.collidepoint(event.pos):
+                        self.save_picker_open = True
                     elif self.title_quit_btn_rect and self.title_quit_btn_rect.collidepoint(event.pos):
                         self.save_inventory_state()
                         self.running = False
@@ -714,10 +756,12 @@ class Game:
         btn_w, btn_h = 300, 62
         self.title_start_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 220, btn_w, btn_h)
         self.title_new_world_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 300, btn_w, btn_h)
-        self.title_quit_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 380, btn_w, btn_h)
+        self.title_choose_save_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 380, btn_w, btn_h)
+        self.title_quit_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 460, btn_w, btn_h)
         for rect, text in (
             (self.title_start_btn_rect, "Start / Continue"),
             (self.title_new_world_btn_rect, "New World"),
+            (self.title_choose_save_btn_rect, "Choose Save"),
             (self.title_quit_btn_rect, "Quit"),
         ):
             hover = rect.collidepoint(pg.mouse.get_pos())
@@ -727,10 +771,50 @@ class Game:
             surf = font_btn.render(text, True, WHITE)
             self.screen.blit(surf, surf.get_rect(center=rect.center))
 
-        hint = font_hint.render("Click a button, Enter=Continue, N=New World", True, GOLD)
+        hint = font_hint.render("Enter=Continue, N=New World, S=Choose Save", True, GOLD)
         self.screen.blit(hint, hint.get_rect(center=(WIDTH // 2, panel_y + panel_h - 26)))
+
+        if self.save_picker_open:
+            self.draw_save_picker()
         self.display.blit(self.screen, (0, 0))
         pg.display.flip()
+
+    def draw_save_picker(self):
+        """Overlay panel to choose active world save."""
+        self.save_picker_slot_rects = []
+        overlay = pg.Surface((WIDTH, HEIGHT), pg.SRCALPHA)
+        overlay.fill((0, 0, 0, 185))
+        self.screen.blit(overlay, (0, 0))
+        panel_w, panel_h = 520, 420
+        panel_x = (WIDTH - panel_w) // 2
+        panel_y = (HEIGHT - panel_h) // 2
+        pg.draw.rect(self.screen, (30, 30, 38), (panel_x, panel_y, panel_w, panel_h))
+        pg.draw.rect(self.screen, WHITE, (panel_x, panel_y, panel_w, panel_h), 2)
+        title_font = pg.font.Font(pg.font.match_font('arial'), 32)
+        row_font = pg.font.Font(pg.font.match_font('arial'), 22)
+        hint_font = pg.font.Font(pg.font.match_font('arial'), 15)
+        title = title_font.render("Choose Save", True, WHITE)
+        self.screen.blit(title, (panel_x + 20, panel_y + 16))
+        saves = self.list_save_files()
+        y = panel_y + 70
+        row_h = 42
+        max_rows = 7
+        for save_name in saves[:max_rows]:
+            rect = pg.Rect(panel_x + 20, y, panel_w - 40, row_h)
+            hover = rect.collidepoint(pg.mouse.get_pos())
+            active = (save_name == self.current_save_name)
+            color = (70, 70, 96) if hover else (50, 50, 70)
+            if active:
+                color = (85, 95, 140)
+            pg.draw.rect(self.screen, color, rect)
+            pg.draw.rect(self.screen, WHITE, rect, 1)
+            label = save_name + ("  (active)" if active else "")
+            surf = row_font.render(label, True, WHITE)
+            self.screen.blit(surf, (rect.x + 12, rect.y + 8))
+            self.save_picker_slot_rects.append((rect, save_name))
+            y += row_h + 8
+        hint = hint_font.render("Click save to switch. Click outside or Esc to close.", True, GOLD)
+        self.screen.blit(hint, (panel_x + 20, panel_y + panel_h - 28))
 
     def draw_hud(self):
         """Top-left HUD: health bar, attack cooldown bar, labels."""
