@@ -1,0 +1,30 @@
+{
+    "statue": {
+        "name": "Stone Sentinel",
+        "spritesheet": "statue.png",
+        "frame_w": 64,
+        "frame_h": 64,
+        "idle_frames": 8,
+        "walk_frames": 8,
+        "attack_frames": 5,
+        "death_frames": 4,
+        "hp": 200,
+        "damage": 50,
+        "speed": 12,
+        "chase_range_tiles": 6,
+        "activation_range_tiles": 5,
+        "attack_cooldown_ms": 4000,
+        "attack_range_tiles": 1.2,
+        "move_delay_ms": 500,
+        "slide_duration_ms": 220,
+        "attack_anim_speed_ms": 150,
+        "anim_speed_ms": 120,
+        "hit_frame": 3,
+        "drops": [
+            {"item_id": "gold_coin", "count": [2, 5], "chance": 0.8},
+            {"item_id": "health_potion", "count": [1, 1], "chance": 0.3},
+            {"item_id": "stone_hammer", "count": [1, 1], "chance": 0.15},
+            {"item_id": "galea", "count": [1, 1], "chance": 0.05}
+        ]
+    }
+}
