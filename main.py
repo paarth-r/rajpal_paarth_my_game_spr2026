@@ -10,6 +10,14 @@ from os import path
 from settings import *
 from sprites import *
 from utils import *
+from crafting import (
+    RECIPES,
+    WEAPON_TYPES,
+    default_starts_known_recipe_ids,
+    get_recipe_list,
+    recipes_unlocked_by_item,
+    try_finish_craft,
+)
 from inventory import Inventory, ITEM_DEFS, EQUIPMENT_SLOTS, weapon_cooldown_ms_for_item
 
 vec = pg.math.Vector2
@@ -41,6 +49,7 @@ class Game:
         self.init_save_system()
         self._load_world_state_from_save()
         self.load_level(self.current_level_name, create_player=True)
+        self._item_sprite_cache = {}
 
     def is_walkable(self, col, row):
         """True if (col, row) is in bounds, not a wall, and not occupied by a mob or player (current or sliding-to)."""
@@ -62,6 +71,26 @@ class Game:
                 return False
         return True
 
+    def tile_blocks_line_of_sight(self, col, row):
+        """Terrain that blocks mob↔player sight (walls, closed exit gate)."""
+        if row < 0 or row >= len(self.map.data):
+            return True
+        if col < 0 or col >= len(self.map.data[0]):
+            return True
+        tile = self.map.data[row][col]
+        if tile == '1':
+            return True
+        if tile == 'N' and not self.level_exit_open:
+            return True
+        return False
+
+    def has_line_of_sight_tiles(self, c0, r0, c1, r1):
+        """True if a straight tile line from (c0,r0) to (c1,r1) has no blocking terrain."""
+        for c, r in tiles_on_grid_line(c0, r0, c1, r1):
+            if self.tile_blocks_line_of_sight(c, r):
+                return False
+        return True
+
     def new(self):
         self.load_data()
         self._initialize_player_inventory()
@@ -72,6 +101,8 @@ class Game:
         self.inv_dragging = None    # (source, index, item_id, count) while dragging
         self.inv_drag_offset = (0, 0)
         self.inv_selected = None    # (source, index) for click-highlight
+        self.inventory_tab = 'character'  # 'character' | 'craft'
+        self.craft_selected_recipe_id = None
         self.pause_menu_open = False
         self.pause_save_btn_rect = None
         self.pause_quit_title_btn_rect = None
@@ -128,9 +159,12 @@ class Game:
     def _initialize_player_inventory(self):
         """Load active world inventory or create default new-world inventory."""
         self.inventory = Inventory(INVENTORY_SLOTS, HOTBAR_SLOTS)
+        self.discovered_recipe_ids = set()
         loaded = self.load_inventory_state()
         if loaded:
             return
+        self._apply_starts_known_recipes()
+        self._sync_discovered_recipes_from_inventory()
         self.inventory.add_item('gold_coin', 5)
         self.inventory.add_item('health_potion', 2)
         # Starting gear: gladius + legionnaire armor set (equip directly)
@@ -176,6 +210,8 @@ class Game:
         self.inventory_open = False
         self.inv_dragging = None
         self.inv_selected = None
+        self.inventory_tab = 'character'
+        self.craft_selected_recipe_id = None
         self.manual_target = None
         self.state = 'playing'
 
@@ -197,6 +233,8 @@ class Game:
         self.inventory_open = False
         self.inv_dragging = None
         self.inv_selected = None
+        self.inventory_tab = 'character'
+        self.craft_selected_recipe_id = None
         self.manual_target = None
         self.save_picker_open = False
         return True
@@ -322,6 +360,7 @@ class Game:
                         self.pause_menu_open = False
                     else:
                         self.pause_menu_open = True
+                        self.inventory.return_craft_staging()
                         self.inventory_open = False
                         self.inv_dragging = None
                         self.inv_selected = None
@@ -330,6 +369,7 @@ class Game:
                     continue
                 if self.inventory_open:
                     if event.key in (INVENTORY_KEY, CHARACTER_KEY, pg.K_ESCAPE):
+                        self.inventory.return_craft_staging()
                         self.inventory_open = False
                         self.inv_dragging = None
                         self.inv_selected = None
@@ -394,6 +434,7 @@ class Game:
                     elif self.pause_quit_title_btn_rect and self.pause_quit_title_btn_rect.collidepoint(event.pos):
                         self.save_inventory_state()
                         self.pause_menu_open = False
+                        self.inventory.return_craft_staging()
                         self.inventory_open = False
                         self.state = 'intro'
                     elif self.pause_resume_btn_rect and self.pause_resume_btn_rect.collidepoint(event.pos):
@@ -423,6 +464,7 @@ class Game:
                 'player_health': int(self.player.health),
                 'current_level': self.current_level_name,
                 'mob_states': self.mob_states_by_level,
+                'discovered_recipes': sorted(self.discovered_recipe_ids),
             }
             with open(self.save_path, 'w') as f:
                 json.dump(payload, f, indent=2)
@@ -476,14 +518,37 @@ class Game:
             if isinstance(saved_hp, int):
                 max_hp = self.player.get_effective_max_health()
                 self.player.health = max(0, min(saved_hp, max_hp))
+            dr = payload.get('discovered_recipes')
+            if isinstance(dr, list):
+                self.discovered_recipe_ids.update(str(x) for x in dr)
+            self._apply_starts_known_recipes()
+            self._sync_discovered_recipes_from_inventory()
             return True
         except Exception:
             return False
+
+    def _apply_starts_known_recipes(self):
+        self.discovered_recipe_ids |= default_starts_known_recipe_ids()
+
+    def _sync_discovered_recipes_from_inventory(self):
+        for i in range(self.inventory.num_slots):
+            s = self.inventory.get_slot(i)
+            if not s:
+                continue
+            item_id, _ = s
+            for rid in recipes_unlocked_by_item(item_id):
+                self.discovered_recipe_ids.add(rid)
+
+    def on_items_gained(self, item_id, count=1):
+        """Call when items enter the bag (e.g. pickup) to unlock crafting recipes."""
+        for rid in recipes_unlocked_by_item(item_id):
+            self.discovered_recipe_ids.add(rid)
 
     def update(self):
         self.all_sprites.update()
         if self.player.health <= 0:
             self.state = 'death'
+            self.inventory.return_craft_staging()
             self.inventory_open = False
             self.inv_dragging = None
             self.inv_selected = None
@@ -712,6 +777,7 @@ class Game:
         self.load_level(next_level, create_player=False)
         # Ensure camera and gameplay continue cleanly on transition.
         self.pause_menu_open = False
+        self.inventory.return_craft_staging()
         self.inventory_open = False
         self.inv_dragging = None
         self.inv_selected = None
@@ -731,6 +797,7 @@ class Game:
         prev_level = self.level_order[idx - 1]
         self.load_level(prev_level, create_player=False)
         self.pause_menu_open = False
+        self.inventory.return_craft_staging()
         self.inventory_open = False
         self.inv_dragging = None
         self.inv_selected = None
@@ -860,30 +927,77 @@ class Game:
         status_surf = font.render(status, True, GOLD if remaining <= 0 else WHITE)
         self.screen.blit(status_surf, (x + HUD_ATTACK_BAR_W + 8, y - 2))
 
+    def _slot_bg_for_item(self, item_id):
+        if not item_id or item_id not in ITEM_DEFS:
+            return SLOT_BG
+        r = ITEM_DEFS[item_id].get('rarity', 'common')
+        return RARITY_SLOT_BG.get(r, SLOT_BG)
+
+    def get_item_sprite_scaled(self, item_id, inner_size):
+        """Scaled square icon for inventory/hotbar, or None if no sprite file."""
+        if item_id not in ITEM_DEFS or inner_size < 4:
+            return None
+        fn = ITEM_DEFS[item_id].get('sprite')
+        if not fn:
+            return None
+        cache_key = (fn, inner_size)
+        if cache_key in self._item_sprite_cache:
+            return self._item_sprite_cache[cache_key]
+        fp = path.join(self.img_dir, fn)
+        if not path.isfile(fp):
+            return None
+        try:
+            img = pg.image.load(fp).convert_alpha()
+        except (pg.error, OSError):
+            return None
+        iw, ih = img.get_size()
+        scale = min(inner_size / iw, inner_size / ih)
+        nw, nh = max(1, int(iw * scale)), max(1, int(ih * scale))
+        scaled = pg.transform.smoothscale(img, (nw, nh))
+        self._item_sprite_cache[cache_key] = scaled
+        return scaled
+
     def draw_slot(self, x, y, slot_data, selected=False, highlight=False, dimmed=False):
         """Draw one inventory slot at (x, y). Returns the pg.Rect."""
         rect = pg.Rect(x, y, SLOT_SIZE, SLOT_SIZE)
-        border_color = SLOT_SELECTED if selected else (WHITE if highlight else SLOT_BORDER)
-        pg.draw.rect(self.screen, SLOT_BG, rect)
+        border_color = SLOT_SELECTED if selected else (WHITE if highlight else (120, 125, 145))
+        item_id = slot_data[0] if slot_data else None
+        bg = self._slot_bg_for_item(item_id) if item_id else SLOT_BG
+        if dimmed and item_id:
+            bg = tuple(max(0, min(255, int(c * 0.55))) for c in bg)
+        pg.draw.rect(self.screen, bg, rect)
         pg.draw.rect(self.screen, border_color, rect, 2)
         if slot_data:
             item_id, count = slot_data
+            pad = 5
+            inner = SLOT_SIZE - 2 * pad
             if item_id in ITEM_DEFS:
-                color = ITEM_DEFS[item_id]['color']
-                if dimmed:
-                    color = tuple(max(0, c // 2) for c in color)
-                pad = 6
-                pg.draw.rect(self.screen, color, (x + pad, y + pad, SLOT_SIZE - 2 * pad, SLOT_SIZE - 2 * pad))
+                sp = self.get_item_sprite_scaled(item_id, inner)
+                if sp:
+                    sw, sh = sp.get_size()
+                    bx = x + pad + (inner - sw) // 2
+                    by = y + pad + (inner - sh) // 2
+                    if dimmed:
+                        sp = sp.copy()
+                        sp.set_alpha(120)
+                    self.screen.blit(sp, (bx, by))
+                else:
+                    color = ITEM_DEFS[item_id]['color']
+                    if dimmed:
+                        color = tuple(max(0, c // 2) for c in color)
+                    pg.draw.rect(self.screen, color, (x + pad, y + pad, inner, inner))
             font = pg.font.Font(pg.font.match_font('arial'), 14)
             if count > 1:
-                text = font.render(str(count), True, WHITE)
-                badge_w = text.get_width() + 4
-                badge_h = text.get_height() + 2
-                badge_x = x + SLOT_SIZE - badge_w - 1
-                badge_y = y + SLOT_SIZE - badge_h - 1
-                pg.draw.rect(self.screen, (20, 20, 20), (badge_x, badge_y, badge_w, badge_h))
-                pg.draw.rect(self.screen, (70, 70, 70), (badge_x, badge_y, badge_w, badge_h), 1)
-                self.screen.blit(text, (badge_x + 2, badge_y + 1))
+                text = str(count)
+                t_surf = font.render(text, True, UI_TEXT_BRIGHT)
+                bw = t_surf.get_width() + 8
+                bh = t_surf.get_height() + 5
+                badge_x = x + SLOT_SIZE - bw - 3
+                badge_y = y + SLOT_SIZE - bh - 3
+                pg.draw.rect(self.screen, (10, 10, 16), (badge_x, badge_y, bw, bh))
+                pg.draw.rect(self.screen, (95, 98, 120), (badge_x, badge_y, bw, bh), 1)
+                self.screen.blit(font.render(text, True, (0, 0, 0)), (badge_x + 5, badge_y + 3))
+                self.screen.blit(t_surf, (badge_x + 4, badge_y + 2))
         return rect
 
     def draw_hotbar(self):
@@ -896,7 +1010,8 @@ class Game:
             slot_data = self.inventory.get_hotbar_slot(i)
             self.draw_slot(x, y, slot_data, selected=(i == self.inventory.selected_hotbar_index))
         font = pg.font.Font(pg.font.match_font('arial'), 14)
-        hint = font.render("1-8 select  F use item  E / I inventory", True, DARKGRAY)
+        hint = font.render("1-8 select  F use item  E / I inventory", True, UI_TEXT_MUTED)
+        self.screen.blit(font.render("1-8 select  F use item  E / I inventory", True, (0, 0, 0)), (start_x + 1, y + SLOT_SIZE + 5))
         self.screen.blit(hint, (start_x, y + SLOT_SIZE + 4))
 
     def use_selected_item(self):
@@ -923,88 +1038,210 @@ class Game:
         return consumed is not None
 
     def draw_inventory(self):
-        """Minecraft-style inventory with hover tooltips, click-to-select, drag-and-drop, right-click equip."""
+        """Character sheet + Craft tab (JSON recipes, weapon-type slots)."""
         overlay = pg.Surface((WIDTH, HEIGHT), pg.SRCALPHA)
         overlay.fill((0, 0, 0, 180))
         self.screen.blit(overlay, (0, 0))
-        font_title = pg.font.Font(pg.font.match_font('arial'), 28)
         font = pg.font.Font(pg.font.match_font('arial'), HUD_FONT_SIZE)
-        font_sm = pg.font.Font(pg.font.match_font('arial'), 14)
-        font_tip = pg.font.Font(pg.font.match_font('arial'), 13)
+        font_sm = pg.font.Font(pg.font.match_font('arial'), 15)
+        font_md = pg.font.Font(pg.font.match_font('arial'), 16)
+        font_tip = pg.font.Font(pg.font.match_font('arial'), 14)
 
         mouse_pos = pg.mouse.get_pos()
         self.inv_slot_rects = []
         hovered_item_id = None
 
-        panel_w = 700
-        panel_h = 530
+        panel_w = 960
+        panel_h = 580
         panel_x = (WIDTH - panel_w) // 2
         panel_y = (HEIGHT - panel_h) // 2
         pg.draw.rect(self.screen, (30, 30, 30), (panel_x, panel_y, panel_w, panel_h))
         pg.draw.rect(self.screen, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
 
-        close_hint = font_sm.render("E / I / Esc to close   Left-click: select   Right-click: equip/unequip   Drag to swap", True, GOLD)
+        hint_shadow = font_sm.render(
+            "E / I / Esc close | Drag swap | R-click equip | Shift+R-click: salvage weapon | Craft tab",
+            True, (0, 0, 0))
+        self.screen.blit(hint_shadow, (panel_x + 13, panel_y + panel_h - 21))
+        close_hint = font_sm.render(
+            "E / I / Esc close | Drag swap | R-click equip | Shift+R-click: salvage weapon | Craft tab",
+            True, UI_TEXT_BRIGHT)
         self.screen.blit(close_hint, (panel_x + 12, panel_y + panel_h - 22))
 
-        # --- LEFT SIDE: player preview, armor slots, stats ---
+        tab_char = pg.Rect(panel_x + 16, panel_y + 10, 118, 28)
+        tab_craft = pg.Rect(panel_x + 138, panel_y + 10, 118, 28)
+
+        content_top = panel_y + 46
         left_x = panel_x + 20
-        cy = panel_y + 16
-
-        preview_size = 96
-        player_img = self.player.move_frames.get(self.player.facing, [None])[0]
-        if player_img:
-            preview = pg.transform.scale(player_img, (preview_size, preview_size))
-            preview_rect = pg.Rect(left_x + 10, cy, preview_size, preview_size)
-            pg.draw.rect(self.screen, SLOT_BG, preview_rect.inflate(8, 8))
-            pg.draw.rect(self.screen, SLOT_BORDER, preview_rect.inflate(8, 8), 2)
-            self.screen.blit(preview, preview_rect)
-
-        eq_x = left_x + preview_size + 30
-        eq_y = cy
-        eq_label_map = {'head': 'Head', 'chest': 'Chest', 'boots': 'Boots', 'shield': 'Shield', 'weapon': 'Weapon'}
-        eq_order = ['head', 'chest', 'boots', 'shield', 'weapon']
-        for eq_slot in eq_order:
-            item_id = self.inventory.equipment.get(eq_slot)
-            slot_data = (item_id, 1) if item_id else None
-            is_drag_src = self.inv_dragging and self.inv_dragging[0] == 'equip' and self.inv_dragging[1] == eq_slot
-            is_selected = self.inv_selected == ('equip', eq_slot)
-            r = self.draw_slot(eq_x, eq_y, slot_data, highlight=is_selected, dimmed=is_drag_src)
-            self.inv_slot_rects.append((r, 'equip', eq_slot))
-            if r.collidepoint(mouse_pos) and item_id and not is_drag_src:
-                hovered_item_id = item_id
-            label = font_sm.render(eq_label_map[eq_slot], True, DARKGRAY)
-            self.screen.blit(label, (eq_x + SLOT_SIZE + 6, eq_y + SLOT_SIZE // 2 - label.get_height() // 2))
-            eq_y += SLOT_SIZE + 4
-
-        # Stats
-        stats_y = cy + preview_size + 20
-        section = font.render("Stats", True, GOLD)
-        self.screen.blit(section, (left_x, stats_y))
-        stats_y += 26
-        attrs = self.player.get_effective_attrs()
-        bonuses = self.inventory.get_equipment_stat_bonuses()
-        for stat in ['strength', 'dexterity', 'intelligence', 'health']:
-            b = bonuses.get(stat, 0)
-            bonus_str = f"  (+{b})" if b > 0 else ""
-            line = font_sm.render(f"{stat.capitalize()}: {attrs.get(stat, 0)}{bonus_str}", True, WHITE)
-            self.screen.blit(line, (left_x + 8, stats_y))
-            stats_y += 20
-        stats_y += 8
-        eff_max = self.player.get_effective_max_health()
-        for text in [f"HP: {self.player.health} / {eff_max}",
-                     f"Damage: {self.player.get_effective_damage()}",
-                     f"Defense: {self.inventory.get_total_defense()}"]:
-            self.screen.blit(font_sm.render(text, True, WHITE), (left_x + 8, stats_y))
-            stats_y += 20
-
-        # --- RIGHT SIDE: inventory grid ---
+        recipe_col_x = panel_x + 14
+        recipe_col_w = 208
         inv_cols = INVENTORY_COLS
         inv_rows = INVENTORY_ROWS
         total_inv_w = inv_cols * SLOT_SIZE + (inv_cols - 1) * SLOT_GAP
         inv_x = panel_x + panel_w - total_inv_w - 20
-        inv_label = font.render("Inventory", True, GOLD)
-        self.screen.blit(inv_label, (inv_x, panel_y + 16))
-        inv_start_y = panel_y + 50
+        inv_start_y = content_top + 36
+
+        if self.inventory_tab == 'character':
+            cy = content_top
+            preview_size = 96
+            player_img = self.player.move_frames.get(self.player.facing, [None])[0]
+            if player_img:
+                preview = pg.transform.scale(player_img, (preview_size, preview_size))
+                preview_rect = pg.Rect(left_x + 10, cy, preview_size, preview_size)
+                pg.draw.rect(self.screen, SLOT_BG, preview_rect.inflate(8, 8))
+                pg.draw.rect(self.screen, SLOT_BORDER, preview_rect.inflate(8, 8), 2)
+                self.screen.blit(preview, preview_rect)
+
+            eq_x = left_x + preview_size + 30
+            eq_y = cy
+            eq_label_map = {'head': 'Head', 'chest': 'Chest', 'boots': 'Boots', 'shield': 'Shield', 'weapon': 'Weapon'}
+            eq_order = ['head', 'chest', 'boots', 'shield', 'weapon']
+            for eq_slot in eq_order:
+                item_id = self.inventory.equipment.get(eq_slot)
+                slot_data = (item_id, 1) if item_id else None
+                is_drag_src = self.inv_dragging and self.inv_dragging[0] == 'equip' and self.inv_dragging[1] == eq_slot
+                is_selected = self.inv_selected == ('equip', eq_slot)
+                r = self.draw_slot(eq_x, eq_y, slot_data, highlight=is_selected, dimmed=is_drag_src)
+                self.inv_slot_rects.append((r, 'equip', eq_slot))
+                if r.collidepoint(mouse_pos) and item_id and not is_drag_src:
+                    hovered_item_id = item_id
+                label = font_sm.render(eq_label_map[eq_slot], True, UI_TEXT_MUTED)
+                self.screen.blit(label, (eq_x + SLOT_SIZE + 6, eq_y + SLOT_SIZE // 2 - label.get_height() // 2))
+                eq_y += SLOT_SIZE + 4
+
+            stats_y = cy + preview_size + 20
+            section = font.render("Stats", True, GOLD)
+            self.screen.blit(section, (left_x, stats_y))
+            stats_y += 26
+            attrs = self.player.get_effective_attrs()
+            bonuses = self.inventory.get_equipment_stat_bonuses()
+            for stat in ['strength', 'dexterity', 'intelligence', 'health']:
+                b = bonuses.get(stat, 0)
+                bonus_str = f"  (+{b})" if b > 0 else ""
+                line = font_sm.render(f"{stat.capitalize()}: {attrs.get(stat, 0)}{bonus_str}", True, UI_TEXT_BRIGHT)
+                self.screen.blit(line, (left_x + 8, stats_y))
+                stats_y += 20
+            stats_y += 8
+            eff_max = self.player.get_effective_max_health()
+            for text in [f"HP: {self.player.health} / {eff_max}",
+                         f"Damage: {self.player.get_effective_damage()}",
+                         f"Defense: {self.inventory.get_total_defense()}"]:
+                self.screen.blit(font_sm.render(text, True, UI_TEXT_BRIGHT), (left_x + 8, stats_y))
+                stats_y += 20
+        else:
+            rlist = get_recipe_list()
+            known = [r for r in rlist if r['id'] in self.discovered_recipe_ids]
+            if (
+                (not self.craft_selected_recipe_id or self.craft_selected_recipe_id not in RECIPES
+                 or self.craft_selected_recipe_id not in self.discovered_recipe_ids)
+                and known
+            ):
+                self.craft_selected_recipe_id = known[0]['id']
+
+            mats_x = recipe_col_x + recipe_col_w + 18
+
+            self.screen.blit(font.render("Known recipes", True, GOLD), (recipe_col_x, content_top))
+            ry = content_top + 30
+            if not known:
+                self.screen.blit(
+                    font_sm.render("No recipes yet.", True, UI_TEXT_BRIGHT),
+                    (recipe_col_x, ry))
+                ry += 22
+                self.screen.blit(
+                    font_sm.render("Pick up special materials", True, UI_TEXT_MUTED),
+                    (recipe_col_x, ry))
+                ry += 20
+                self.screen.blit(
+                    font_sm.render("to discover formulas.", True, UI_TEXT_MUTED),
+                    (recipe_col_x, ry))
+                ry += 28
+            for rec in known:
+                rid = rec['id']
+                rr = pg.Rect(recipe_col_x, ry, recipe_col_w, 30)
+                sel = rid == self.craft_selected_recipe_id
+                pg.draw.rect(self.screen, (48, 72, 52) if sel else (42, 44, 52), rr)
+                pg.draw.rect(self.screen, GOLD if sel else (110, 115, 135), rr, 2)
+                name_s = font_sm.render(rec.get('display_name', rid), True, UI_TEXT_BRIGHT)
+                self.screen.blit(name_s, (rr.x + 8, rr.y + 7))
+                self.inv_slot_rects.append((rr, 'craft_recipe', rid))
+                ry += 34
+
+            self.screen.blit(font.render("Materials", True, GOLD), (mats_x, content_top))
+            recipe_obj = RECIPES.get(self.craft_selected_recipe_id) if known else None
+            my = content_top + 30
+            if recipe_obj:
+                out = recipe_obj.get('output', {})
+                out_id = out.get('item_id', '')
+                out_name = ITEM_DEFS.get(out_id, {}).get('name', out_id)
+                self.screen.blit(
+                    font_md.render(f"Recipe: {recipe_obj.get('display_name', '')}", True, UI_TEXT_BRIGHT),
+                    (mats_x, my))
+                my += 26
+                self.screen.blit(
+                    font_sm.render(f"Output: {out_name} x{int(out.get('count', 1))}", True, UI_TEXT_MUTED),
+                    (mats_x, my))
+                my += 28
+
+                wt = recipe_obj.get('weapon_type', 'dagger')
+                slots_order = WEAPON_TYPES.get(wt, {}).get('slots', [])
+                inputs = recipe_obj.get('inputs', {})
+                for sk in slots_order:
+                    need = inputs.get(sk)
+                    slot_title = sk.replace('_', ' ').title()
+                    self.screen.blit(font_md.render(slot_title, True, GOLD), (mats_x, my))
+                    my += 24
+                    if need is None:
+                        self.screen.blit(
+                            font_sm.render("Magic — not implemented yet", True, UI_TEXT_DIM),
+                            (mats_x + 4, my))
+                        my += 28
+                        continue
+                    have = self.inventory.count_item(need)
+                    nm = ITEM_DEFS.get(need, {}).get('name', need)
+                    self.screen.blit(font_sm.render(f"Item: {nm}", True, UI_TEXT_BRIGHT), (mats_x + 4, my))
+                    my += 22
+                    req_n = 1
+                    ok = have >= req_n
+                    count_col = (130, 210, 140) if ok else (255, 130, 130)
+                    count_line = f"Required: {req_n}          In inventory: {have}"
+                    self.screen.blit(font_md.render(count_line, True, count_col), (mats_x + 4, my))
+                    my += 24
+                    placed = self.inventory._craft_placements.get(sk)
+                    slot_data = (placed, 1) if placed else None
+                    is_drag_src = self.inv_dragging and self.inv_dragging[0] == 'craft' and self.inv_dragging[1] == sk
+                    r = self.draw_slot(mats_x + 4, my, slot_data, dimmed=is_drag_src)
+                    self.inv_slot_rects.append((r, 'craft', sk))
+                    if r.collidepoint(mouse_pos) and placed and not is_drag_src:
+                        hovered_item_id = placed
+                    self.screen.blit(
+                        font_sm.render("Drag from inventory or weapon slot", True, UI_TEXT_MUTED),
+                        (mats_x + 8 + SLOT_SIZE + SLOT_GAP, my + 12))
+                    my += SLOT_SIZE + 20
+
+                cbtn = pg.Rect(mats_x, my + 4, 190, 38)
+                pg.draw.rect(self.screen, (52, 92, 58), cbtn)
+                pg.draw.rect(self.screen, GOLD, cbtn, 2)
+                self.screen.blit(font_md.render("Craft", True, UI_TEXT_BRIGHT), (cbtn.x + 64, cbtn.y + 9))
+                self.inv_slot_rects.append((cbtn, 'craft_btn', 0))
+
+                wpy = my + 52
+                self.screen.blit(
+                    font_sm.render("Weapon slot (optional source)", True, UI_TEXT_MUTED),
+                    (mats_x, wpy))
+                wpy += 22
+                wid = self.inventory.equipment.get('weapon')
+                wdata = (wid, 1) if wid else None
+                is_w_drag = self.inv_dragging and self.inv_dragging[0] == 'equip' and self.inv_dragging[1] == 'weapon'
+                is_w_sel = self.inv_selected == ('equip', 'weapon')
+                wr = self.draw_slot(mats_x, wpy, wdata, highlight=is_w_sel, dimmed=is_w_drag)
+                self.inv_slot_rects.append((wr, 'equip', 'weapon'))
+                if wr.collidepoint(mouse_pos) and wid and not is_w_drag:
+                    hovered_item_id = wid
+            elif not known:
+                self.screen.blit(
+                    font_sm.render("Discover a recipe to see materials here.", True, UI_TEXT_DIM),
+                    (mats_x, my))
+
+        self.screen.blit(font.render("Inventory", True, GOLD), (inv_x, content_top))
         for row in range(inv_rows):
             for col in range(inv_cols):
                 idx = row * inv_cols + col
@@ -1019,20 +1256,39 @@ class Game:
                 if r.collidepoint(mouse_pos) and slot_data and not is_drag_src:
                     hovered_item_id = slot_data[0]
 
+        tab_hit = []
+        for rect, tid, lbl in ((tab_char, 'character', 'Character'), (tab_craft, 'craft', 'Craft')):
+            sel = self.inventory_tab == tid
+            pg.draw.rect(self.screen, (48, 48, 48), rect)
+            pg.draw.rect(self.screen, GOLD if sel else (100, 100, 100), rect, 2)
+            self.screen.blit(font_sm.render(lbl, True, GOLD if sel else WHITE), (rect.x + 18, rect.y + 6))
+            tab_hit.append((rect, 'tab', tid))
+        self.inv_slot_rects = tab_hit + self.inv_slot_rects
+
         # --- Drag ghost ---
         if self.inv_dragging:
             _, _, drag_item_id, drag_count = self.inv_dragging
-            if drag_item_id in ITEM_DEFS:
+            ghost_size = SLOT_SIZE - 8
+            gx = mouse_pos[0] - ghost_size // 2
+            gy = mouse_pos[1] - ghost_size // 2
+            inner = ghost_size - 6
+            sp = self.get_item_sprite_scaled(drag_item_id, inner) if drag_item_id in ITEM_DEFS else None
+            ghost = pg.Surface((ghost_size, ghost_size), pg.SRCALPHA)
+            if sp:
+                sw, sh = sp.get_size()
+                bx = (ghost_size - sw) // 2
+                by = (ghost_size - sh) // 2
+                sp2 = sp.copy()
+                sp2.set_alpha(220)
+                ghost.blit(sp2, (bx, by))
+            elif drag_item_id in ITEM_DEFS:
                 color = ITEM_DEFS[drag_item_id]['color']
-                ghost_size = SLOT_SIZE - 8
-                gx = mouse_pos[0] - ghost_size // 2
-                gy = mouse_pos[1] - ghost_size // 2
-                ghost = pg.Surface((ghost_size, ghost_size), pg.SRCALPHA)
-                pg.draw.rect(ghost, (*color, 180), (0, 0, ghost_size, ghost_size))
-                self.screen.blit(ghost, (gx, gy))
-                if drag_count > 1:
-                    cnt = font_sm.render(str(drag_count), True, WHITE)
-                    self.screen.blit(cnt, (gx + ghost_size - cnt.get_width(), gy + ghost_size - cnt.get_height()))
+                pg.draw.rect(ghost, (*color, 200), (4, 4, ghost_size - 8, ghost_size - 8))
+            self.screen.blit(ghost, (gx, gy))
+            if drag_count > 1:
+                cnt = font_sm.render(str(drag_count), True, UI_TEXT_BRIGHT)
+                self.screen.blit(font_sm.render(str(drag_count), True, (0, 0, 0)), (gx + ghost_size - cnt.get_width() + 1, gy + ghost_size - cnt.get_height() + 1))
+                self.screen.blit(cnt, (gx + ghost_size - cnt.get_width(), gy + ghost_size - cnt.get_height()))
 
         # --- Tooltip ---
         if hovered_item_id and not self.inv_dragging:
@@ -1046,6 +1302,21 @@ class Game:
         itype = item.get('type', '')
         if itype:
             lines.append(f"Type: {itype.capitalize()}")
+        rar = item.get('rarity')
+        if rar:
+            lines.append(f"Rarity: {str(rar).capitalize()}")
+        wt = item.get('weapon_type')
+        if wt:
+            lines.append(f"Weapon layout: {wt.capitalize()}")
+        salv = item.get('salvage')
+        if salv:
+            lines.append("Salvage (Shift+right-click):")
+            for entry in salv:
+                nid = entry['item_id']
+                nm = ITEM_DEFS.get(nid, {}).get('name', nid)
+                lo, hi = entry['count']
+                ch = int(float(entry.get('chance', 1)) * 100)
+                lines.append(f"  {nm} x{lo}-{hi} ({ch}% per roll)")
         desc = item.get('description', '')
         if desc:
             lines.append(desc)
@@ -1066,27 +1337,43 @@ class Game:
             for ek, ev in item['effect'].items():
                 lines.append(f"Effect: {ek} {ev}")
 
-        rendered = [font.render(l, True, WHITE) for l in lines]
-        name_surf = pg.font.Font(pg.font.match_font('arial'), 15).render(lines[0], True, GOLD) if lines else None
-        if name_surf:
-            rendered[0] = name_surf
-        pad = 8
-        tip_w = max(s.get_width() for s in rendered) + pad * 2
-        tip_h = sum(s.get_height() + 2 for s in rendered) + pad * 2
-        tx = pos[0] + 16
-        ty = pos[1] + 4
+        name_font = pg.font.Font(pg.font.match_font('arial'), 16)
+        pad = 10
+        tip_w = pad * 2
+        line_surfs = []
+        for i, l in enumerate(lines):
+            fnt = name_font if i == 0 else font
+            col = GOLD if i == 0 else UI_TEXT_BRIGHT
+            w = fnt.render(l, True, col).get_width()
+            tip_w = max(tip_w, w + pad * 2)
+            line_surfs.append((l, fnt, col))
+        tip_h = pad * 2
+        for l, fnt, col in line_surfs:
+            tip_h += fnt.render(l, True, col).get_height() + 3
+        tx = pos[0] + 18
+        ty = pos[1] + 6
         if tx + tip_w > WIDTH:
-            tx = pos[0] - tip_w - 4
+            tx = pos[0] - tip_w - 6
         if ty + tip_h > HEIGHT:
-            ty = HEIGHT - tip_h - 4
+            ty = HEIGHT - tip_h - 6
         bg = pg.Surface((tip_w, tip_h), pg.SRCALPHA)
-        bg.fill((20, 20, 20, 230))
+        bg.fill((34, 36, 44, 248))
         self.screen.blit(bg, (tx, ty))
-        pg.draw.rect(self.screen, SLOT_BORDER, (tx, ty, tip_w, tip_h), 1)
+        pg.draw.rect(self.screen, (150, 155, 175), (tx, ty, tip_w, tip_h), 2)
         cy = ty + pad
-        for surf in rendered:
-            self.screen.blit(surf, (tx + pad, cy))
-            cy += surf.get_height() + 2
+        for l, fnt, col in line_surfs:
+            sh = fnt.render(l, True, (0, 0, 0))
+            self.screen.blit(sh, (tx + pad + 1, cy + 1))
+            self.screen.blit(fnt.render(l, True, col), (tx + pad, cy))
+            cy += fnt.render(l, True, col).get_height() + 3
+
+    def _validate_craft_slot(self, item_id, craft_slot_key):
+        """True if item belongs in this recipe slot (recipe must match selected)."""
+        recipe = RECIPES.get(self.craft_selected_recipe_id)
+        if recipe is None:
+            return False
+        need = recipe.get('inputs', {}).get(craft_slot_key)
+        return need is not None and item_id == need
 
     def _inv_hit_test(self, pos):
         """Return (source, index) for the slot under pos, or None."""
@@ -1102,7 +1389,30 @@ class Game:
             return
         source, index = hit
         if event.button == 1:
-            # Left click: start drag if slot has item, or select
+            if source == 'tab':
+                if index == 'character':
+                    if self.inventory_tab == 'craft':
+                        self.inventory.return_craft_staging()
+                    self.inventory_tab = 'character'
+                else:
+                    self.inventory_tab = 'craft'
+                    self._sync_discovered_recipes_from_inventory()
+                return
+            if source == 'craft_recipe':
+                if self.craft_selected_recipe_id != index:
+                    self.inventory.return_craft_staging()
+                    self.craft_selected_recipe_id = index
+                return
+            if source == 'craft_btn':
+                if try_finish_craft(self.inventory, self.craft_selected_recipe_id):
+                    self.save_inventory_state()
+                return
+            if source == 'craft':
+                item_id = self.inventory._craft_placements.get(index)
+                if item_id:
+                    self.inv_dragging = (source, index, item_id, 1)
+                    self.inv_selected = hit
+                return
             if source == 'inv':
                 slot_data = self.inventory.get_slot(index)
                 if slot_data:
@@ -1118,7 +1428,16 @@ class Game:
                 else:
                     self.inv_selected = hit
         elif event.button == 3:
-            # Right click: equip from inventory, or unequip from equipment
+            if pg.key.get_mods() & pg.KMOD_SHIFT:
+                if source == 'inv':
+                    if self.inventory.try_salvage_inv_slot(index):
+                        self._sync_discovered_recipes_from_inventory()
+                        self.save_inventory_state()
+                elif source == 'equip' and index == 'weapon':
+                    if self.inventory.try_salvage_equipped_weapon():
+                        self._sync_discovered_recipes_from_inventory()
+                        self.save_inventory_state()
+                return
             if source == 'inv':
                 slot_data = self.inventory.get_slot(index)
                 if slot_data:
@@ -1134,13 +1453,67 @@ class Game:
             return
         drag_src, drag_idx, drag_item, drag_count = self.inv_dragging
         drop_hit = self._inv_hit_test(event.pos)
-        self.inv_dragging = None
 
         if drop_hit is None:
+            self.inv_dragging = None
             return
         drop_src, drop_idx = drop_hit
         if (drag_src, drag_idx) == (drop_src, drop_idx):
+            self.inv_dragging = None
             return
+
+        if self.inventory_tab == 'craft':
+            if drag_src == 'inv' and drop_src == 'craft':
+                if not self._validate_craft_slot(drag_item, drop_idx):
+                    return
+                if not self.inventory.remove_item(drag_idx, 1):
+                    return
+                old = self.inventory._craft_placements.get(drop_idx)
+                if old:
+                    self.inventory.add_item(old, 1)
+                self.inventory._craft_placements[drop_idx] = drag_item
+                self.save_inventory_state()
+                self.inv_dragging = None
+                return
+            if drag_src == 'equip' and drop_src == 'craft' and drag_idx == 'weapon':
+                if not self._validate_craft_slot(drag_item, drop_idx):
+                    return
+                old = self.inventory._craft_placements.get(drop_idx)
+                if old:
+                    self.inventory.add_item(old, 1)
+                self.inventory._craft_placements[drop_idx] = drag_item
+                self.inventory.equipment['weapon'] = None
+                self.save_inventory_state()
+                self.inv_dragging = None
+                return
+            if drag_src == 'craft' and drop_src == 'inv':
+                drop_data = self.inventory.get_slot(drop_idx)
+                if drop_data is None:
+                    self.inventory.set_slot(drop_idx, drag_item, 1)
+                    self.inventory._craft_placements.pop(drag_idx, None)
+                    self.save_inventory_state()
+                    self.inv_dragging = None
+                    return
+                di, dc = drop_data
+                idef = ITEM_DEFS.get(di, {})
+                mx = idef.get('max_stack', 99)
+                if di == drag_item and idef.get('stackable', True) and dc < mx:
+                    self.inventory.set_slot(drop_idx, di, dc + 1)
+                    self.inventory._craft_placements.pop(drag_idx, None)
+                    self.save_inventory_state()
+                    self.inv_dragging = None
+                    return
+                return
+            if drag_src == 'craft' and drop_src == 'equip' and drop_idx == 'weapon':
+                if self.inventory.equipment.get('weapon') is not None:
+                    return
+                self.inventory.equipment['weapon'] = drag_item
+                self.inventory._craft_placements.pop(drag_idx, None)
+                self.save_inventory_state()
+                self.inv_dragging = None
+                return
+
+        self.inv_dragging = None
 
         # Swap logic between inventory slots and equipment slots
         if drag_src == 'inv' and drop_src == 'inv':

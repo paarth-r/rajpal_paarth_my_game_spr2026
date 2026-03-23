@@ -29,23 +29,93 @@
         "max_stack": 1,
         "description": "An ancient key. What does it open?"
     },
+    "iron_scrap": {
+        "name": "Iron Scrap",
+        "type": "crafting_material",
+        "color": [150, 150, 165],
+        "sprite": null,
+        "stackable": true,
+        "max_stack": 99,
+        "description": "Salvaged metal. Used in forging."
+    },
+    "leather_strip": {
+        "name": "Leather Strip",
+        "type": "crafting_material",
+        "color": [120, 90, 60],
+        "sprite": null,
+        "stackable": true,
+        "max_stack": 99,
+        "description": "Cut from old grips and sheaths."
+    },
+    "wood_splinter": {
+        "name": "Wood Splinter",
+        "type": "crafting_material",
+        "color": [160, 120, 70],
+        "sprite": null,
+        "stackable": true,
+        "max_stack": 99,
+        "description": "Salvaged haft or bow wood."
+    },
+    "stone_chip": {
+        "name": "Stone Chip",
+        "type": "crafting_material",
+        "color": [130, 130, 130],
+        "sprite": null,
+        "stackable": true,
+        "max_stack": 99,
+        "description": "Flakes from a stone weapon."
+    },
+    "arcane_sliver": {
+        "name": "Arcane Sliver",
+        "type": "crafting_material",
+        "color": [140, 80, 220],
+        "sprite": null,
+        "stackable": true,
+        "max_stack": 99,
+        "description": "Residual focus energy from a staff."
+    },
+    "assassin_blade_shard": {
+        "name": "Assassin Blade Shard",
+        "type": "crafting_material",
+        "color": [90, 200, 200],
+        "sprite": null,
+        "stackable": true,
+        "max_stack": 20,
+        "description": "A fragment of a shadow-forged edge. Fits a dagger blade slot."
+    },
+    "assassin_handle_wrap": {
+        "name": "Assassin Handle Wrap",
+        "type": "crafting_material",
+        "color": [60, 80, 90],
+        "sprite": null,
+        "stackable": true,
+        "max_stack": 20,
+        "description": "Worn silk and leather from a rogue's grip. Fits a dagger handle slot."
+    },
     "gladius": {
         "name": "Gladius",
         "type": "weapon",
+        "weapon_type": "sword",
+        "rarity": "uncommon",
         "slot": "weapon",
         "color": [180, 180, 200],
-        "sprite": null,
+        "sprite": "gladius.png",
         "stackable": false,
         "max_stack": 1,
         "description": "A short Roman sword. Reliable and quick.",
         "base_damage": 30,
         "scaling_stat": "strength",
         "scaling_factor": 0.5,
-        "attack_speed_bonus": 0
+        "attack_speed_bonus": 0,
+        "salvage": [
+            {"item_id": "iron_scrap", "count": [2, 4], "chance": 1.0},
+            {"item_id": "leather_strip", "count": [1, 2], "chance": 0.7}
+        ]
     },
     "stone_hammer": {
         "name": "Stone Hammer",
         "type": "weapon",
+        "weapon_type": "sword",
         "slot": "weapon",
         "color": [140, 140, 140],
         "sprite": null,
@@ -55,11 +125,16 @@
         "base_damage": 45,
         "scaling_stat": "strength",
         "scaling_factor": 0.7,
-        "attack_speed_bonus": 40
+        "attack_speed_bonus": 40,
+        "salvage": [
+            {"item_id": "stone_chip", "count": [3, 6], "chance": 1.0},
+            {"item_id": "wood_splinter", "count": [1, 2], "chance": 0.5}
+        ]
     },
     "pilum": {
         "name": "Pilum",
         "type": "weapon",
+        "weapon_type": "sword",
         "slot": "weapon",
         "color": [140, 120, 80],
         "sprite": null,
@@ -69,11 +144,16 @@
         "base_damage": 55,
         "scaling_stat": "strength",
         "scaling_factor": 0.8,
-        "attack_speed_bonus": 50
+        "attack_speed_bonus": 50,
+        "salvage": [
+            {"item_id": "iron_scrap", "count": [1, 3], "chance": 1.0},
+            {"item_id": "wood_splinter", "count": [2, 3], "chance": 0.8}
+        ]
     },
     "arcane_staff": {
         "name": "Arcane Staff",
         "type": "weapon",
+        "weapon_type": "staff",
         "slot": "weapon",
         "color": [100, 50, 200],
         "sprite": null,
@@ -83,11 +163,16 @@
         "base_damage": 40,
         "scaling_stat": "intelligence",
         "scaling_factor": 0.7,
-        "attack_speed_bonus": -20
+        "attack_speed_bonus": -20,
+        "salvage": [
+            {"item_id": "wood_splinter", "count": [2, 4], "chance": 1.0},
+            {"item_id": "arcane_sliver", "count": [1, 3], "chance": 0.85}
+        ]
     },
     "pugio": {
         "name": "Pugio",
         "type": "weapon",
+        "weapon_type": "dagger",
         "slot": "weapon",
         "color": [200, 200, 210],
         "sprite": null,
@@ -97,21 +182,32 @@
         "base_damage": 20,
         "scaling_stat": "dexterity",
         "scaling_factor": 0.6,
-        "attack_speed_bonus": -30
+        "attack_speed_bonus": -30,
+        "salvage": [
+            {"item_id": "iron_scrap", "count": [1, 2], "chance": 1.0},
+            {"item_id": "leather_strip", "count": [1, 2], "chance": 0.9}
+        ]
     },
     "assassins_grace": {
         "name": "Assassin's Grace",
         "type": "weapon",
+        "weapon_type": "dagger",
+        "rarity": "rare",
         "slot": "weapon",
         "color": [120, 220, 220],
-        "sprite": null,
+        "sprite": "assassinsgrace.png",
         "stackable": false,
         "max_stack": 1,
         "description": "A whisper-light dagger. Low damage, extremely fast recovery.",
         "base_damage": 20,
         "scaling_stat": "dexterity",
         "scaling_factor": 0.4,
-        "attack_speed_bonus": -220
+        "attack_speed_bonus": -220,
+        "salvage": [
+            {"item_id": "assassin_blade_shard", "count": [1, 1], "chance": 0.35},
+            {"item_id": "assassin_handle_wrap", "count": [1, 1], "chance": 0.35},
+            {"item_id": "iron_scrap", "count": [1, 2], "chance": 0.5}
+        ]
     },
     "lorica": {
         "name": "Lorica Segmentata",

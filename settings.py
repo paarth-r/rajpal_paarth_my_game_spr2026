@@ -90,6 +90,17 @@ SLOT_GAP = 4
 SLOT_BG = (50, 50, 50)
 SLOT_BORDER = (80, 80, 80)
 SLOT_SELECTED = GOLD
+# Inventory / hotbar slot tint behind item icon (by item rarity)
+RARITY_SLOT_BG = {
+    'common': (52, 52, 56),
+    'uncommon': (42, 58, 48),
+    'rare': (38, 48, 78),
+    'epic': (68, 38, 88),
+    'legendary': (92, 62, 28),
+}
+UI_TEXT_BRIGHT = (245, 245, 248)
+UI_TEXT_MUTED = (190, 195, 210)
+UI_TEXT_DIM = (140, 145, 165)
 INVENTORY_COLS = 6
 INVENTORY_ROWS = 4
 INVENTORY_KEY = pg.K_i  # toggle inventory (pg.K_i)

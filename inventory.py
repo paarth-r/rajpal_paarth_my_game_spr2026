@@ -2,6 +2,7 @@
 Inventory, equipment, and item system. Item definitions loaded from data/items.json.
 """
 import json
+import random
 from os import path
 from settings import *
 
@@ -14,6 +15,7 @@ def load_item_defs():
     defs = {}
     for item_id, d in raw.items():
         d['color'] = tuple(d.get('color', [200, 200, 200]))
+        d.setdefault('rarity', 'common')
         defs[item_id] = d
     return defs
 
@@ -40,11 +42,67 @@ class Inventory:
         self.slots = [None] * num_slots
         self.selected_hotbar_index = 0
         self.equipment = {slot: None for slot in EQUIPMENT_SLOTS}
+        # Crafting UI staging: slot_name -> item_id (one per slot; removed from bag while staged)
+        self._craft_placements = {}
+
+    def return_craft_staging(self):
+        """Return staged crafting parts to inventory and clear the craft grid."""
+        for _slot, item_id in list(self._craft_placements.items()):
+            self.add_item(item_id, 1)
+        self._craft_placements.clear()
+
+    def apply_salvage_from_weapon(self, item_id):
+        """Roll salvage drops for a weapon definition. Returns True if salvage was defined and rolled."""
+        item = ITEM_DEFS.get(item_id)
+        if item is None or item.get('type') != 'weapon':
+            return False
+        salvage = item.get('salvage')
+        if not salvage:
+            return False
+        for entry in salvage:
+            chance = float(entry.get('chance', 1.0))
+            if random.random() > chance:
+                continue
+            lo, hi = entry['count']
+            count = random.randint(int(lo), int(hi))
+            nid = entry['item_id']
+            if nid in ITEM_DEFS and count > 0:
+                self.add_item(nid, count)
+        return True
+
+    def try_salvage_inv_slot(self, slot_index):
+        """Shift+right-click: destroy one weapon in inventory, yield salvage."""
+        s = self.get_slot(slot_index)
+        if s is None:
+            return False
+        item_id, _cnt = s
+        if not self.apply_salvage_from_weapon(item_id):
+            return False
+        self.remove_item(slot_index, 1)
+        return True
+
+    def try_salvage_equipped_weapon(self):
+        """Salvage the equipped weapon (unequips it)."""
+        w = self.equipment.get('weapon')
+        if w is None:
+            return False
+        if not self.apply_salvage_from_weapon(w):
+            return False
+        self.equipment['weapon'] = None
+        return True
 
     def get_slot(self, index):
         if 0 <= index < self.num_slots:
             return self.slots[index]
         return None
+
+    def count_item(self, item_id):
+        """Total count of item_id across inventory slots (not equipment)."""
+        n = 0
+        for s in self.slots:
+            if s is not None and s[0] == item_id:
+                n += s[1]
+        return n
 
     def set_slot(self, index, item_id, count):
         if index < 0 or index >= self.num_slots:

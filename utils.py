@@ -69,3 +69,27 @@ class Cooldown:
     def ready(self):
         current_time = pg.time.get_ticks()
         return current_time - self.start_time >= self.time
+
+
+def tiles_on_grid_line(c0, r0, c1, r1):
+    """Bresenham line in tile column/row space. Inclusive endpoints. (col, row) order."""
+    c0, r0, c1, r1 = int(c0), int(r0), int(c1), int(r1)
+    cells = []
+    dx = abs(c1 - c0)
+    dy = abs(r1 - r0)
+    sx = 1 if c0 < c1 else -1
+    sy = 1 if r0 < r1 else -1
+    err = dx - dy
+    c, r = c0, r0
+    while True:
+        cells.append((c, r))
+        if c == c1 and r == r1:
+            break
+        e2 = 2 * err
+        if e2 > -dy:
+            err -= dy
+            c += sx
+        if e2 < dx:
+            err += dx
+            r += sy
+    return cells

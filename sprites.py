@@ -487,10 +487,11 @@ class Mob(Sprite):
         dy_tile = py - self.tile_y
         dist_sq_tiles = dx_tile * dx_tile + dy_tile * dy_tile
         activation_radius_sq = self.mob_activation_range_tiles * self.mob_activation_range_tiles
+        has_los = self.game.has_line_of_sight_tiles(self.tile_x, self.tile_y, px, py)
 
         # Inactive: stand as "idle still" (top-left frame) until player within 5 block radius
         if self.state == 'inactive':
-            if dist_sq_tiles <= activation_radius_sq:
+            if dist_sq_tiles <= activation_radius_sq and has_los:
                 self.state = 'idle'
                 self.anim_frame = 0
                 self.last_anim = now
@@ -526,6 +527,7 @@ class Mob(Sprite):
             and self.heal_frames
             and dist_sq_tiles > 0
             and dist_sq_tiles <= (self.mob_chase_range_tiles ** 2)
+            and has_los
             and self.health <= int(self.max_health * self.heal_threshold_pct)
         ):
             self.heal_used = True
@@ -552,7 +554,7 @@ class Mob(Sprite):
             self._ensure_rect_valid()
             return
 
-        in_chase = dist_sq_tiles <= (self.mob_chase_range_tiles ** 2) and dist_sq_tiles > 0
+        in_chase = dist_sq_tiles <= (self.mob_chase_range_tiles ** 2) and dist_sq_tiles > 0 and has_los
         adjacent = (abs(dx_tile) + abs(dy_tile)) == 1
         in_attack_range = dist_sq_tiles <= (self.mob_attack_range_tiles ** 2)
 
@@ -562,7 +564,7 @@ class Mob(Sprite):
                 self.anim_frame += 1
                 # Frame 3 of the attack (index 3) is the actual hit
                 if self.anim_frame == self.mob_hit_frame and not self.attack_damage_dealt:
-                    if in_attack_range:
+                    if in_attack_range and has_los:
                         player.hurt(self.mob_damage)
                     self.attack_damage_dealt = True
                 if self.anim_frame >= len(self.attack_frames):
@@ -576,7 +578,7 @@ class Mob(Sprite):
             self._ensure_rect_valid()
             return
 
-        if adjacent and in_attack_range and (now - self.last_attack) >= self.mob_attack_cooldown:
+        if adjacent and in_attack_range and has_los and (now - self.last_attack) >= self.mob_attack_cooldown:
             # Briefly show "blade-ready" stance before attack frames when available.
             if self.idle_frames:
                 self._update_image_cache(self.idle_frames[0])
@@ -675,9 +677,16 @@ class DroppedItem(Sprite):
         item_def = ITEM_DEFS.get(item_id, {})
         color = item_def.get('color', (200, 200, 200))
         size = max(8, TILESIZE // 2)
-        self.image = pg.Surface((size, size), pg.SRCALPHA)
-        pg.draw.rect(self.image, color, (0, 0, size, size))
-        pg.draw.rect(self.image, WHITE, (0, 0, size, size), 1)
+        icon = game.get_item_sprite_scaled(item_id, size - 2)
+        if icon is not None:
+            self.image = pg.Surface((size, size), pg.SRCALPHA)
+            sw, sh = icon.get_size()
+            self.image.blit(icon, ((size - sw) // 2, (size - sh) // 2))
+            pg.draw.rect(self.image, WHITE, (0, 0, size, size), 1)
+        else:
+            self.image = pg.Surface((size, size), pg.SRCALPHA)
+            pg.draw.rect(self.image, color, (0, 0, size, size))
+            pg.draw.rect(self.image, WHITE, (0, 0, size, size), 1)
         self.rect = self.image.get_rect()
         self.pos = vec(world_x, world_y)
         self.rect.center = self.pos
@@ -685,11 +694,14 @@ class DroppedItem(Sprite):
     def update(self):
         player = self.game.player
         if self.rect.colliderect(player.hit_rect):
+            before = self.count
             leftover = self.game.inventory.add_item(self.item_id, self.count)
-            if leftover < self.count:
-                self.count = leftover
-                if self.count <= 0:
-                    self.kill()
+            picked = before - leftover
+            if picked > 0:
+                self.game.on_items_gained(self.item_id, picked)
+            self.count = leftover
+            if self.count <= 0:
+                self.kill()
 
 
 def roll_mob_drops(mob_type_id):

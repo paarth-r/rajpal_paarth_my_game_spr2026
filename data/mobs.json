@@ -59,7 +59,8 @@
         "drops": [
             {"item_id": "gold_coin", "count": [2, 6], "chance": 0.9},
             {"item_id": "health_potion", "count": [1, 2], "chance": 0.75},
-            {"item_id": "assassins_grace", "count": [1, 1], "chance": 0.22}
+            {"item_id": "assassin_blade_shard", "count": [1, 1], "chance": 0.4},
+            {"item_id": "assassin_handle_wrap", "count": [1, 1], "chance": 0.4}
         ]
     }
 }

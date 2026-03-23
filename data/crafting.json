@@ -1,0 +1,38 @@
+{
+    "weapon_types": {
+        "sword": {
+            "slots": ["hilt", "blade", "handle", "magic"],
+            "description": "Swords use a hilt, blade, handle, and optional magic focus."
+        },
+        "dagger": {
+            "slots": ["blade", "handle", "magic"],
+            "description": "Daggers omit a hilt; blade, handle, and optional magic."
+        },
+        "bow": {
+            "slots": ["string", "grip", "magic"],
+            "description": "Bows use string, grip, and optional magic."
+        },
+        "staff": {
+            "slots": ["focus", "shaft", "magic"],
+            "description": "Staves use a focus, shaft, and optional magic."
+        }
+    },
+    "recipes": [
+        {
+            "id": "assassins_grace",
+            "display_name": "Assassin's Grace",
+            "starts_known": false,
+            "discover_on_items": ["assassin_blade_shard", "assassin_handle_wrap"],
+            "weapon_type": "dagger",
+            "inputs": {
+                "blade": "assassin_blade_shard",
+                "handle": "assassin_handle_wrap",
+                "magic": null
+            },
+            "output": {
+                "item_id": "assassins_grace",
+                "count": 1
+            }
+        }
+    ]
+}
