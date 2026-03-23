@@ -99,6 +99,20 @@
         "scaling_factor": 0.6,
         "attack_speed_bonus": -30
     },
+    "assassins_grace": {
+        "name": "Assassin's Grace",
+        "type": "weapon",
+        "slot": "weapon",
+        "color": [120, 220, 220],
+        "sprite": null,
+        "stackable": false,
+        "max_stack": 1,
+        "description": "A whisper-light dagger. Low damage, extremely fast recovery.",
+        "base_damage": 20,
+        "scaling_stat": "dexterity",
+        "scaling_factor": 0.4,
+        "attack_speed_bonus": -220
+    },
     "lorica": {
         "name": "Lorica Segmentata",
         "type": "armor",

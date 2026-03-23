@@ -22,6 +22,15 @@ ITEM_DEFS = load_item_defs()
 EQUIPMENT_SLOTS = ['weapon', 'head', 'chest', 'boots', 'shield']
 
 
+def weapon_cooldown_ms_for_item(item_id):
+    """Effective attack cooldown (ms) if this item is equipped as weapon (matches Inventory.get_weapon_cooldown_ms)."""
+    item = ITEM_DEFS.get(item_id, {})
+    if item.get('type') != 'weapon':
+        return None
+    bonus = int(item.get('attack_speed_bonus', 0))
+    return max(80, int(PLAYER_ATTACK_COOLDOWN_MS + bonus))
+
+
 class Inventory:
     """Slot-based inventory with equipment. Each slot is (item_id, count) or None."""
 
@@ -169,3 +178,13 @@ class Inventory:
         scaling_factor = weapon.get('scaling_factor', 0.0)
         scaling_val = player_attrs.get(scaling_stat, 0)
         return int(base * (1 + strength / 20) + scaling_val * scaling_factor)
+
+    def get_weapon_cooldown_ms(self, base_cooldown_ms):
+        """Return cooldown adjusted by equipped weapon attack_speed_bonus."""
+        weapon_id = self.equipment.get('weapon')
+        if weapon_id is None:
+            return int(base_cooldown_ms)
+        weapon = ITEM_DEFS.get(weapon_id, {})
+        bonus = int(weapon.get('attack_speed_bonus', 0))
+        # Negative bonus = faster weapon. Keep a safe floor.
+        return max(80, int(base_cooldown_ms + bonus))

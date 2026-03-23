@@ -2,7 +2,7 @@
   "slots": [
     [
       "gold_coin",
-      33
+      37
     ],
     null,
     [
@@ -40,24 +40,10 @@
   },
   "selected_hotbar_index": 1,
   "player_health": 150,
-  "current_level": "level2.txt",
+  "current_level": "level3.txt",
   "mob_states": {
     "level1.txt": [],
-    "level2.txt": [
-      {
-        "tile_x": 18,
-        "tile_y": 5,
-        "health": 200,
-        "state": "inactive",
-        "mob_type": "statue"
-      },
-      {
-        "tile_x": 15,
-        "tile_y": 9,
-        "health": 200,
-        "state": "inactive",
-        "mob_type": "statue"
-      }
-    ]
+    "level2.txt": [],
+    "level3.txt": []
   }
 }

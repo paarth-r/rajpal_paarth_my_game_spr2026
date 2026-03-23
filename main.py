@@ -10,7 +10,7 @@ from os import path
 from settings import *
 from sprites import *
 from utils import *
-from inventory import Inventory, ITEM_DEFS, EQUIPMENT_SLOTS
+from inventory import Inventory, ITEM_DEFS, EQUIPMENT_SLOTS, weapon_cooldown_ms_for_item
 
 vec = pg.math.Vector2
 
@@ -235,6 +235,8 @@ class Game:
                     self.level_return_tiles.append((col, row))
                 elif tile == 'M':
                     default_mob_spawns.append((col, row))
+                elif tile == 'A':
+                    default_mob_spawns.append((col, row, 'shadow_assassin'))
 
         if self.checkpoint_tile is None and player_spawn is not None:
             self.checkpoint_tile = player_spawn
@@ -267,8 +269,13 @@ class Game:
                 if m.get('state') in ('inactive', 'idle', 'walk', 'attack'):
                     mob.state = m.get('state')
         else:
-            for col, row in default_mob_spawns:
-                Mob(self, col, row)
+            for spawn in default_mob_spawns:
+                if len(spawn) == 3:
+                    col, row, mob_type = spawn
+                else:
+                    col, row = spawn
+                    mob_type = 'statue'
+                Mob(self, col, row, mob_type=mob_type)
 
         self.level_exit_open = len([m for m in self.all_mobs if getattr(m, 'state', None) != 'dead']) == 0
         self.camera = Camera(self.map.width, self.map.height)
@@ -838,6 +845,7 @@ class Game:
         self.screen.blit(label, (x, y))
         y += HUD_LINE_HEIGHT
         remaining = self.player.get_attack_cooldown_remaining()
+        cooldown_total = max(1, self.player.get_attack_cooldown_ms())
         self.screen.fill(HP_BAR_BG, (x, y, HUD_ATTACK_BAR_W, HUD_ATTACK_BAR_H))
         if self.player.attacking:
             status = "Attacking..."
@@ -845,7 +853,7 @@ class Game:
             self.screen.fill(HP_BAR_FG, (x, y, HUD_ATTACK_BAR_W, HUD_ATTACK_BAR_H))
             status = "Ready"
         else:
-            fill_w = max(0, int(HUD_ATTACK_BAR_W * (1 - remaining / PLAYER_ATTACK_COOLDOWN_MS)))
+            fill_w = max(0, int(HUD_ATTACK_BAR_W * (1 - remaining / cooldown_total)))
             if fill_w > 0:
                 self.screen.fill(HP_BAR_FG, (x, y, fill_w, HUD_ATTACK_BAR_H))
             status = f"{remaining} ms"
@@ -1043,6 +1051,9 @@ class Game:
             lines.append(desc)
         if item.get('base_damage'):
             lines.append(f"Base Damage: {item['base_damage']}")
+        cd = weapon_cooldown_ms_for_item(item_id)
+        if cd is not None:
+            lines.append(f"Attack cooldown: {cd} ms (base {PLAYER_ATTACK_COOLDOWN_MS} ms)")
         if item.get('scaling_stat'):
             lines.append(f"Scales: {item['scaling_stat'].capitalize()} x{item.get('scaling_factor', 0)}")
         if item.get('defense'):

@@ -144,7 +144,7 @@ class Player(Sprite):
             return
         if self.attacking:
             return
-        if (now - self.last_attack_end_time) < PLAYER_ATTACK_COOLDOWN_MS:
+        if (now - self.last_attack_end_time) < self.get_attack_cooldown_ms():
             return
         self.attacking = True
         self.attack_hit_dealt = False
@@ -183,10 +183,16 @@ class Player(Sprite):
     def get_attack_cooldown_remaining(self):
         """Ms until next attack allowed; 0 if ready. While attacking, returns full cooldown (bar shows 'recharging')."""
         now = pg.time.get_ticks()
+        cooldown = self.get_attack_cooldown_ms()
         if self.attacking:
-            return PLAYER_ATTACK_COOLDOWN_MS  # show as recharging until animation + cooldown
+            return cooldown  # show as recharging until animation + cooldown
         elapsed = now - self.last_attack_end_time
-        return max(0, PLAYER_ATTACK_COOLDOWN_MS - elapsed)
+        return max(0, cooldown - elapsed)
+
+    def get_attack_cooldown_ms(self):
+        if hasattr(self.game, 'inventory'):
+            return self.game.inventory.get_weapon_cooldown_ms(PLAYER_ATTACK_COOLDOWN_MS)
+        return PLAYER_ATTACK_COOLDOWN_MS
 
     def get_attack_rect(self):
         """Rect in front of player used for hitting mobs. Only valid while attacking."""
@@ -325,30 +331,65 @@ def _scale_mob_frame(surf):
 
 
 class Mob(Sprite):
-    # Spritesheet: 512x256, 8 cols x 4 rows, 64x64 per frame. Scaled to TILESIZE to match player size.
+    # Mob visuals/stats are data-driven by MOB_DEFS (spritesheet rows: idle, walk, attack, death).
     def __init__(self, game, x, y, mob_type='statue'):
         self.groups = game.all_sprites, game.all_mobs
         Sprite.__init__(self, self.groups)
         self.game = game
         self.mob_type = mob_type
-        w, h = MOB_FRAME_W, MOB_FRAME_H
-        statue_path = path.join(game.img_dir, "statue.png")
-        if path.exists(statue_path):
-            sheet = Spritesheet(statue_path)
-            raw_idle = [sheet.get_image(i * w, 0 * h, w, h) for i in range(8)]
-            raw_walk = [sheet.get_image(i * w, 1 * h, w, h) for i in range(8)]
-            raw_attack = [sheet.get_image(i * w, 2 * h, w, h) for i in range(5)]
-            raw_death = [sheet.get_image(i * w, 3 * h, w, h) for i in range(4)]
+        d = MOB_DEFS.get(mob_type, MOB_DEFS.get('statue', {}))
+        self.hp = d.get('hp', MOB_HP)
+        self.mob_damage = d.get('damage', MOB_DAMAGE)
+        self.mob_attack_cooldown = d.get('attack_cooldown_ms', MOB_ATTACK_COOLDOWN)
+        self.mob_attack_range_tiles = d.get('attack_range_tiles', MOB_ATTACK_RANGE / TILESIZE)
+        self.mob_attack_anim_speed = d.get('attack_anim_speed_ms', MOB_ATTACK_ANIM_SPEED)
+        self.mob_anim_speed = d.get('anim_speed_ms', MOB_ANIM_SPEED)
+        self.mob_move_delay = d.get('move_delay_ms', MOB_MOVE_DELAY)
+        self.mob_slide_duration = d.get('slide_duration_ms', MOB_SLIDE_DURATION_MS)
+        self.mob_chase_range_tiles = d.get('chase_range_tiles', MOB_CHASE_RANGE / TILESIZE)
+        self.mob_activation_range_tiles = d.get('activation_range_tiles', MOB_ACTIVATION_RANGE_TILES)
+        self.mob_hit_frame = d.get('hit_frame', 3)
+        self.idle_row = d.get('idle_row', 0)
+        self.walk_row = d.get('walk_row', 1)
+        self.attack_row = d.get('attack_row', 2)
+        self.death_row = d.get('death_row', 3)
+        self.heal_row = d.get('heal_row', None)
+        self.heal_frame_count = d.get('heal_frames', 0)
+        self.heal_once_amount = d.get('heal_once_amount', 0)
+        self.heal_threshold_pct = float(d.get('heal_threshold_pct', 0.5))
+        self.heal_used = False
+
+        w = d.get('frame_w', MOB_FRAME_W)
+        h = d.get('frame_h', MOB_FRAME_H)
+        sprite_name = d.get('spritesheet', 'statue.png')
+        sprite_path = path.join(game.img_dir, sprite_name)
+        idle_n = d.get('idle_frames', 1)
+        walk_n = d.get('walk_frames', 1)
+        atk_n = d.get('attack_frames', 1)
+        death_n = d.get('death_frames', 1)
+
+        if path.exists(sprite_path):
+            sheet = Spritesheet(sprite_path)
+            raw_idle = [sheet.get_image(i * w, self.idle_row * h, w, h) for i in range(idle_n)]
+            raw_walk = [sheet.get_image(i * w, self.walk_row * h, w, h) for i in range(walk_n)]
+            raw_attack = [sheet.get_image(i * w, self.attack_row * h, w, h) for i in range(atk_n)]
+            raw_death = [sheet.get_image(i * w, self.death_row * h, w, h) for i in range(death_n)]
             self.idle_frames = [_scale_mob_frame(f) for f in raw_idle]
             self.walk_frames = [_scale_mob_frame(f) for f in raw_walk]
             self.attack_frames = [_scale_mob_frame(f) for f in raw_attack]
             self.death_frames = [_scale_mob_frame(f) for f in raw_death]
-            self.image = self.idle_frames[0]
+            if self.heal_row is not None and self.heal_frame_count > 0:
+                raw_heal = [sheet.get_image(i * w, self.heal_row * h, w, h) for i in range(self.heal_frame_count)]
+                self.heal_frames = [_scale_mob_frame(f) for f in raw_heal]
+            else:
+                self.heal_frames = []
+            self.image = self.idle_frames[0] if self.idle_frames else pg.Surface((TILESIZE, TILESIZE))
         else:
             self.image = pg.Surface((TILESIZE, TILESIZE))
             self.image.fill(DARKRED)
             self.idle_frames = self.walk_frames = [self.image]
             self.attack_frames = self.death_frames = [self.image]
+            self.heal_frames = [self.image]
         self.rect = self.image.get_rect()
         self.tile_x, self.tile_y = x, y
         self.pos = vec(self.tile_x * TILESIZE + TILESIZE / 2, self.tile_y * TILESIZE + TILESIZE / 2)
@@ -356,9 +397,9 @@ class Mob(Sprite):
         self.hit_rect = MOB_HIT_RECT.copy()
         self.hit_rect.center = self.pos
         self.rect.center = self.hit_rect.center
-        self.speed = MOB_SPEED
-        self.health = MOB_HP
-        self.max_health = MOB_HP
+        self.speed = d.get('speed', MOB_SPEED)
+        self.health = self.hp
+        self.max_health = self.hp
         self.last_attack = 0
         self.last_move = pg.time.get_ticks()
         self.state = 'inactive'  # inactive -> idle still (row 0 frame 0); activate when player in 5 block radius
@@ -372,7 +413,7 @@ class Mob(Sprite):
         self.move_target = None  # vec tile center we are sliding to
         self.slide_from = None
         self.slide_start_time = 0
-        self.slide_duration_ms = MOB_SLIDE_DURATION_MS
+        self.slide_duration_ms = self.mob_slide_duration
 
     def _image_for_frame(self, frame_surf):
         """Return frame with flip applied; cache result to avoid flicker from new surfaces every frame."""
@@ -445,7 +486,7 @@ class Mob(Sprite):
         dx_tile = px - self.tile_x
         dy_tile = py - self.tile_y
         dist_sq_tiles = dx_tile * dx_tile + dy_tile * dy_tile
-        activation_radius_sq = MOB_ACTIVATION_RANGE_TILES * MOB_ACTIVATION_RANGE_TILES
+        activation_radius_sq = self.mob_activation_range_tiles * self.mob_activation_range_tiles
 
         # Inactive: stand as "idle still" (top-left frame) until player within 5 block radius
         if self.state == 'inactive':
@@ -461,7 +502,7 @@ class Mob(Sprite):
                 return
 
         if self.state == 'dead':
-            if now - self.last_anim > MOB_ANIM_SPEED:
+            if now - self.last_anim > self.mob_anim_speed:
                 self.last_anim = now
                 self.anim_frame += 1
                 if self.anim_frame >= len(self.death_frames):
@@ -477,18 +518,52 @@ class Mob(Sprite):
             self._ensure_rect_valid()
             return
 
-        in_chase = dist_sq_tiles <= (MOB_CHASE_RANGE / TILESIZE) ** 2 and dist_sq_tiles > 0
+        # Optional one-time combat heal (used by shadow assassin).
+        if (
+            self.state not in ('attack', 'heal')
+            and not self.heal_used
+            and self.heal_once_amount > 0
+            and self.heal_frames
+            and dist_sq_tiles > 0
+            and dist_sq_tiles <= (self.mob_chase_range_tiles ** 2)
+            and self.health <= int(self.max_health * self.heal_threshold_pct)
+        ):
+            self.heal_used = True
+            self.health = min(self.max_health, self.health + self.heal_once_amount)
+            self.state = 'heal'
+            self.anim_frame = 0
+            self.last_anim = now
+            self._update_image_cache(self.heal_frames[0])
+            self.rect.center = self.hit_rect.center
+            self._ensure_rect_valid()
+            return
+
+        if self.state == 'heal':
+            if now - self.last_anim > self.mob_anim_speed:
+                self.last_anim = now
+                self.anim_frame += 1
+                if self.anim_frame >= len(self.heal_frames):
+                    self.state = 'idle'
+                    self.anim_frame = 0
+                    self._update_image_cache(self.idle_frames[0])
+                else:
+                    self._update_image_cache(self.heal_frames[self.anim_frame])
+            self.rect.center = self.hit_rect.center
+            self._ensure_rect_valid()
+            return
+
+        in_chase = dist_sq_tiles <= (self.mob_chase_range_tiles ** 2) and dist_sq_tiles > 0
         adjacent = (abs(dx_tile) + abs(dy_tile)) == 1
-        in_attack_range = dist_sq_tiles <= (MOB_ATTACK_RANGE / TILESIZE) ** 2
+        in_attack_range = dist_sq_tiles <= (self.mob_attack_range_tiles ** 2)
 
         if self.state == 'attack':
-            if now - self.last_anim > MOB_ATTACK_ANIM_SPEED:
+            if now - self.last_anim > self.mob_attack_anim_speed:
                 self.last_anim = now
                 self.anim_frame += 1
                 # Frame 3 of the attack (index 3) is the actual hit
-                if self.anim_frame == 3 and not self.attack_damage_dealt:
+                if self.anim_frame == self.mob_hit_frame and not self.attack_damage_dealt:
                     if in_attack_range:
-                        player.hurt(MOB_DAMAGE)
+                        player.hurt(self.mob_damage)
                     self.attack_damage_dealt = True
                 if self.anim_frame >= len(self.attack_frames):
                     self.state = 'idle'
@@ -501,7 +576,10 @@ class Mob(Sprite):
             self._ensure_rect_valid()
             return
 
-        if adjacent and in_attack_range and (now - self.last_attack) >= MOB_ATTACK_COOLDOWN:
+        if adjacent and in_attack_range and (now - self.last_attack) >= self.mob_attack_cooldown:
+            # Briefly show "blade-ready" stance before attack frames when available.
+            if self.idle_frames:
+                self._update_image_cache(self.idle_frames[0])
             self.state = 'attack'
             self.facing_left = px < self.tile_x
             self.anim_frame = 0
@@ -514,7 +592,7 @@ class Mob(Sprite):
             return
 
         # Tile-based move: one step every MOB_MOVE_DELAY toward player
-        if in_chase and self.move_target is None and (now - self.last_move) >= MOB_MOVE_DELAY:
+        if in_chase and self.move_target is None and (now - self.last_move) >= self.mob_move_delay:
             self.last_move = now
             if adjacent:
                 pass  # next tick can attack
@@ -547,7 +625,7 @@ class Mob(Sprite):
             self.state = 'walk'
         else:
             self.state = 'idle'
-        if now - self.last_anim > MOB_ANIM_SPEED:
+        if now - self.last_anim > self.mob_anim_speed:
             self.last_anim = now
             frames = self.walk_frames if self.state == 'walk' else self.idle_frames
             self.anim_frame = (self.anim_frame + 1) % len(frames)
