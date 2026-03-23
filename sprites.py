@@ -370,16 +370,32 @@ class Mob(Sprite):
 
         if path.exists(sprite_path):
             sheet = Spritesheet(sprite_path)
-            raw_idle = [sheet.get_image(i * w, self.idle_row * h, w, h) for i in range(idle_n)]
-            raw_walk = [sheet.get_image(i * w, self.walk_row * h, w, h) for i in range(walk_n)]
-            raw_attack = [sheet.get_image(i * w, self.attack_row * h, w, h) for i in range(atk_n)]
-            raw_death = [sheet.get_image(i * w, self.death_row * h, w, h) for i in range(death_n)]
+            if d.get('center_grid_on_sheet'):
+                gc = int(d.get('sheet_grid_cols', 8))
+                gr = int(d.get('sheet_grid_rows', 4))
+                sw, sh = sheet.spritesheet.get_size()
+                ox = max(0, (sw - gc * w) // 2)
+                oy = max(0, (sh - gr * h) // 2)
+            else:
+                so = d.get('sheet_origin', [0, 0])
+                ox, oy = int(so[0]), int(so[1])
+
+            def _row_frames(row_idx, n):
+                return [
+                    sheet.get_image(ox + i * w, oy + row_idx * h, w, h)
+                    for i in range(n)
+                ]
+
+            raw_idle = _row_frames(self.idle_row, idle_n)
+            raw_walk = _row_frames(self.walk_row, walk_n)
+            raw_attack = _row_frames(self.attack_row, atk_n)
+            raw_death = _row_frames(self.death_row, death_n)
             self.idle_frames = [_scale_mob_frame(f) for f in raw_idle]
             self.walk_frames = [_scale_mob_frame(f) for f in raw_walk]
             self.attack_frames = [_scale_mob_frame(f) for f in raw_attack]
             self.death_frames = [_scale_mob_frame(f) for f in raw_death]
             if self.heal_row is not None and self.heal_frame_count > 0:
-                raw_heal = [sheet.get_image(i * w, self.heal_row * h, w, h) for i in range(self.heal_frame_count)]
+                raw_heal = _row_frames(self.heal_row, self.heal_frame_count)
                 self.heal_frames = [_scale_mob_frame(f) for f in raw_heal]
             else:
                 self.heal_frames = []

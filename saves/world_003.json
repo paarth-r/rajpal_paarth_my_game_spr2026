@@ -58,10 +58,10 @@
         "mob_type": "statue"
       },
       {
-        "tile_x": 15,
+        "tile_x": 9,
         "tile_y": 9,
         "health": 200,
-        "state": "inactive",
+        "state": "idle",
         "mob_type": "statue"
       }
     ]
