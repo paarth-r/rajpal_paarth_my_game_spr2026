@@ -19,6 +19,15 @@ from crafting import (
     try_finish_craft,
 )
 from inventory import Inventory, ITEM_DEFS, EQUIPMENT_SLOTS, weapon_cooldown_ms_for_item
+from progression import (
+    CLASS_DEFS,
+    DEFAULT_CLASS_ID,
+    apply_skill_node_bonuses,
+    can_unlock_skill,
+    compute_base_attrs_for_level,
+    get_class_def,
+    xp_for_next_level,
+)
 
 vec = pg.math.Vector2
 
@@ -92,6 +101,11 @@ class Game:
         return True
 
     def new(self):
+        self.player_class_id = DEFAULT_CLASS_ID
+        self.player_level = 1
+        self.player_xp = 0
+        self.skill_points = 0
+        self.purchased_skill_nodes = set()
         self.load_data()
         self._initialize_player_inventory()
         self.inventory_open = False
@@ -101,7 +115,7 @@ class Game:
         self.inv_dragging = None    # (source, index, item_id, count) while dragging
         self.inv_drag_offset = (0, 0)
         self.inv_selected = None    # (source, index) for click-highlight
-        self.inventory_tab = 'character'  # 'character' | 'craft'
+        self.inventory_tab = 'character'  # 'character' | 'skills' | 'craft'
         self.craft_selected_recipe_id = None
         self.pause_menu_open = False
         self.pause_save_btn_rect = None
@@ -113,7 +127,15 @@ class Game:
         self.title_quit_btn_rect = None
         self.save_picker_open = False
         self.save_picker_slot_rects = []
+        self.save_picker_delete_rects = []
         self.respawn_button_rect = None
+        self.class_picker_for_new_world = False
+        self.class_picker_selected_id = DEFAULT_CLASS_ID
+        self.class_picker_class_rects = []
+        self.class_picker_begin_rect = None
+        self.skill_node_rects = []
+        self.death_screen_coins_lost = 0
+        self.death_screen_xp_lost = 0
         self.state = 'intro'
         self.run()
 
@@ -156,22 +178,92 @@ class Game:
         except Exception:
             pass
 
+    def get_skill_attr_bonuses(self):
+        return apply_skill_node_bonuses(self.player_class_id, self.purchased_skill_nodes)
+
+    def _recompute_player_base_attrs_from_progression(self):
+        self.player.base_attrs = compute_base_attrs_for_level(
+            self.player_class_id, self.player_level
+        )
+
+    def _apply_starting_gear_for_class(self):
+        c = get_class_def(self.player_class_id)
+        if not c:
+            return
+        si = c.get('starting_inventory', {})
+        for item_id, qty in si.get('items', {}).items():
+            if item_id in ITEM_DEFS:
+                self.inventory.add_item(item_id, int(qty))
+        for slot, item_id in si.get('equipment', {}).items():
+            if slot in EQUIPMENT_SLOTS and item_id in ITEM_DEFS:
+                self.inventory.equipment[slot] = item_id
+
+    def add_player_xp(self, amount):
+        if amount <= 0:
+            return
+        self.player_xp += amount
+        while self.player_level < 99:
+            need = xp_for_next_level(self.player_level)
+            if self.player_xp < need:
+                break
+            self.player_xp -= need
+            self.player_level += 1
+            self.skill_points += 1
+            self._recompute_player_base_attrs_from_progression()
+            self.player.recalc_stats()
+        self.save_inventory_state()
+
+    def try_purchase_skill_node(self, node_id):
+        purchased = self.purchased_skill_nodes
+        if not can_unlock_skill(
+            self.player_class_id, node_id, self.player_level, purchased, self.skill_points
+        ):
+            return False
+        self.skill_points -= 1
+        self.purchased_skill_nodes = set(purchased) | {node_id}
+        self.player.recalc_stats()
+        self.save_inventory_state()
+        return True
+
+    def on_mob_kill(self, mob):
+        if self.state != 'playing':
+            return
+        d = MOB_DEFS.get(getattr(mob, 'mob_type', 'statue'), {})
+        xp = int(d.get('xp', 25))
+        self.add_player_xp(xp)
+
+    def _apply_death_penalties(self):
+        """Lose a fraction of gold and XP toward next level; skip at zero coins or XP level floor."""
+        gold = self.inventory.count_item('gold_coin')
+        coins_lost = 0
+        if gold > 0:
+            coins_lost = max(1, int(gold * DEATH_GOLD_LOSS_PCT))
+            coins_lost = min(coins_lost, gold)
+            self.inventory.remove_item_by_id('gold_coin', coins_lost)
+
+        xp_lost = 0
+        at_xp_floor = self.player_level == 1 and self.player_xp == 0
+        if not at_xp_floor and self.player_xp > 0:
+            xp_lost = max(1, int(self.player_xp * DEATH_XP_LOSS_PCT))
+            xp_lost = min(xp_lost, self.player_xp)
+            self.player_xp -= xp_lost
+
+        self.death_screen_coins_lost = coins_lost
+        self.death_screen_xp_lost = xp_lost
+        self.save_inventory_state()
+
     def _initialize_player_inventory(self):
         """Load active world inventory or create default new-world inventory."""
         self.inventory = Inventory(INVENTORY_SLOTS, HOTBAR_SLOTS)
         self.discovered_recipe_ids = set()
         loaded = self.load_inventory_state()
         if loaded:
+            self._recompute_player_base_attrs_from_progression()
+            self.player.recalc_stats()
             return
         self._apply_starts_known_recipes()
         self._sync_discovered_recipes_from_inventory()
-        self.inventory.add_item('gold_coin', 5)
-        self.inventory.add_item('health_potion', 2)
-        # Starting gear: gladius + legionnaire armor set (equip directly)
-        self.inventory.equipment['weapon'] = 'gladius'
-        self.inventory.equipment['head'] = 'legion_helm'
-        self.inventory.equipment['chest'] = 'legion_cuirass'
-        self.inventory.equipment['boots'] = 'legion_boots'
+        self._apply_starting_gear_for_class()
         self.save_inventory_state()
 
     def _load_world_state_from_save(self):
@@ -190,8 +282,8 @@ class Game:
         except Exception:
             pass
 
-    def create_new_world(self):
-        """Create a new save world and start from fresh defaults."""
+    def create_new_world(self, class_id=None):
+        """Create a new save world and start from fresh defaults; class_id sets role and starting gear."""
         saves = [f for f in os.listdir(self.saves_dir) if f.endswith('.json')]
         nums = []
         for s in saves:
@@ -201,6 +293,15 @@ class Game:
                     nums.append(int(stem))
         next_num = (max(nums) + 1) if nums else 1
         new_name = f"world_{next_num:03d}.json"
+        cid = class_id or DEFAULT_CLASS_ID
+        if get_class_def(cid) is None:
+            cid = DEFAULT_CLASS_ID
+        self.player_class_id = cid
+        self.player_level = 1
+        self.player_xp = 0
+        self.skill_points = 0
+        self.purchased_skill_nodes = set()
+        self.class_picker_for_new_world = False
         self.set_active_world(new_name)
         self.current_level_name = self.level_order[0]
         self.mob_states_by_level = {}
@@ -219,10 +320,33 @@ class Game:
         """Return sorted list of world save filenames."""
         return sorted([f for f in os.listdir(self.saves_dir) if f.endswith('.json')])
 
+    def delete_save(self, save_name):
+        """Remove a world JSON from disk; re-point active save if it was deleted."""
+        saves = self.list_save_files()
+        if save_name not in saves:
+            return
+        fp = path.join(self.saves_dir, save_name)
+        try:
+            os.remove(fp)
+        except OSError:
+            return
+        was_active = self.current_save_name == save_name
+        remaining = self.list_save_files()
+        if was_active:
+            if remaining:
+                self.set_active_world(remaining[0])
+            else:
+                self.set_active_world('world_001.json')
+
     def select_world(self, save_name):
         """Switch active world and load its state while staying in title menu."""
         if save_name not in self.list_save_files():
             return False
+        self.player_class_id = DEFAULT_CLASS_ID
+        self.player_level = 1
+        self.player_xp = 0
+        self.skill_points = 0
+        self.purchased_skill_nodes = set()
         self.set_active_world(save_name)
         self.current_level_name = self.level_order[0]
         self.mob_states_by_level = {}
@@ -341,13 +465,21 @@ class Game:
                 self.running = False
             if event.type == pg.KEYDOWN:
                 if self.state == 'intro':
-                    if event.key == pg.K_ESCAPE and self.save_picker_open:
-                        self.save_picker_open = False
-                        continue
+                    if event.key == pg.K_ESCAPE:
+                        if self.class_picker_for_new_world:
+                            self.class_picker_for_new_world = False
+                            continue
+                        if self.save_picker_open:
+                            self.save_picker_open = False
+                            continue
                     if event.key == pg.K_RETURN:
+                        if self.class_picker_for_new_world:
+                            self.create_new_world(self.class_picker_selected_id)
+                            continue
                         self.state = 'playing'
                     if event.key == pg.K_n:
-                        self.create_new_world()
+                        self.class_picker_for_new_world = True
+                        self.class_picker_selected_id = DEFAULT_CLASS_ID
                     if event.key == pg.K_s:
                         self.save_picker_open = not self.save_picker_open
                     continue
@@ -404,20 +536,40 @@ class Game:
                     continue
             if event.type == pg.MOUSEBUTTONDOWN and event.button == 1:
                 if self.state == 'intro':
-                    if self.save_picker_open:
+                    if self.class_picker_for_new_world:
                         hit = False
-                        for rect, save_name in self.save_picker_slot_rects:
+                        for rect, cid in self.class_picker_class_rects:
                             if rect.collidepoint(event.pos):
-                                self.select_world(save_name)
+                                self.class_picker_selected_id = cid
                                 hit = True
                                 break
+                        if self.class_picker_begin_rect and self.class_picker_begin_rect.collidepoint(event.pos):
+                            self.create_new_world(self.class_picker_selected_id)
+                            hit = True
+                        if not hit:
+                            self.class_picker_for_new_world = False
+                        continue
+                    if self.save_picker_open:
+                        hit = False
+                        for rect, save_name in self.save_picker_delete_rects:
+                            if rect.collidepoint(event.pos):
+                                self.delete_save(save_name)
+                                hit = True
+                                break
+                        if not hit:
+                            for rect, save_name in self.save_picker_slot_rects:
+                                if rect.collidepoint(event.pos):
+                                    self.select_world(save_name)
+                                    hit = True
+                                    break
                         if not hit:
                             self.save_picker_open = False
                         continue
                     if self.title_start_btn_rect and self.title_start_btn_rect.collidepoint(event.pos):
                         self.state = 'playing'
                     elif self.title_new_world_btn_rect and self.title_new_world_btn_rect.collidepoint(event.pos):
-                        self.create_new_world()
+                        self.class_picker_for_new_world = True
+                        self.class_picker_selected_id = DEFAULT_CLASS_ID
                     elif self.title_choose_save_btn_rect and self.title_choose_save_btn_rect.collidepoint(event.pos):
                         self.save_picker_open = True
                     elif self.title_quit_btn_rect and self.title_quit_btn_rect.collidepoint(event.pos):
@@ -465,6 +617,11 @@ class Game:
                 'current_level': self.current_level_name,
                 'mob_states': self.mob_states_by_level,
                 'discovered_recipes': sorted(self.discovered_recipe_ids),
+                'player_class_id': self.player_class_id,
+                'player_level': int(self.player_level),
+                'player_xp': int(self.player_xp),
+                'skill_points': int(self.skill_points),
+                'purchased_skill_nodes': sorted(self.purchased_skill_nodes),
             }
             with open(self.save_path, 'w') as f:
                 json.dump(payload, f, indent=2)
@@ -521,6 +678,14 @@ class Game:
             dr = payload.get('discovered_recipes')
             if isinstance(dr, list):
                 self.discovered_recipe_ids.update(str(x) for x in dr)
+            self.player_class_id = payload.get('player_class_id', DEFAULT_CLASS_ID)
+            if get_class_def(self.player_class_id) is None:
+                self.player_class_id = DEFAULT_CLASS_ID
+            self.player_level = max(1, int(payload.get('player_level', 1)))
+            self.player_xp = max(0, int(payload.get('player_xp', 0)))
+            self.skill_points = max(0, int(payload.get('skill_points', 0)))
+            ps = payload.get('purchased_skill_nodes', [])
+            self.purchased_skill_nodes = set(ps) if isinstance(ps, list) else set()
             self._apply_starts_known_recipes()
             self._sync_discovered_recipes_from_inventory()
             return True
@@ -547,6 +712,7 @@ class Game:
     def update(self):
         self.all_sprites.update()
         if self.player.health <= 0:
+            self._apply_death_penalties()
             self.state = 'death'
             self.inventory.return_craft_staging()
             self.inventory_open = False
@@ -660,7 +826,8 @@ class Game:
             px, py = self.player.hit_rect.centerx, self.player.hit_rect.centery
             mx, my = selected_target.hit_rect.centerx, selected_target.hit_rect.centery
             d_sq = (px - mx) ** 2 + (py - my) ** 2
-            in_range = d_sq <= PLAYER_ATTACK_RANGE * PLAYER_ATTACK_RANGE
+            pr = self.player.get_effective_attack_range()
+            in_range = d_sq <= pr * pr
             outline_color = GREEN if in_range else RED
             pg.draw.rect(self.screen, outline_color, target_rect, 2)
         # Mob attack range overlays only (player overlay removed)
@@ -671,13 +838,14 @@ class Game:
                 continue
             if getattr(mob, 'state', None) == 'inactive':
                 continue
-            mx, my = mob.hit_rect.centerx, mob.hit_rect.centery
-            mr = MOB_ATTACK_RANGE
+            # Match Mob.update: tile-space Euclidean distance (includes diagonals when in range).
+            mtx, mty = mob.tile_x, mob.tile_y
+            r_sq = mob.mob_attack_range_tiles * mob.mob_attack_range_tiles
             for tx in range(self.map.tilewidth):
                 for ty in range(self.map.tileheight):
-                    cx = tx * TILESIZE + TILESIZE / 2
-                    cy = ty * TILESIZE + TILESIZE / 2
-                    if (mx - cx) ** 2 + (my - cy) ** 2 <= mr * mr:
+                    dx = tx - mtx
+                    dy = ty - mty
+                    if dx * dx + dy * dy <= r_sq:
                         path_rect.x = tx * TILESIZE
                         path_rect.y = ty * TILESIZE
                         screen_rect = self.camera.apply_rect(path_rect)
@@ -697,14 +865,38 @@ class Game:
         self.screen.fill((10, 0, 0))
         title_font = pg.font.Font(pg.font.match_font('arial'), 64)
         msg_font = pg.font.Font(pg.font.match_font('arial'), 24)
+        loss_font = pg.font.Font(pg.font.match_font('arial'), 20)
         btn_font = pg.font.Font(pg.font.match_font('arial'), 28)
         title = title_font.render("You Died", True, RED)
         msg = msg_font.render("The dungeon has claimed you... for now.", True, WHITE)
-        self.screen.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 120)))
-        self.screen.blit(msg, msg.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60)))
+        self.screen.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 140)))
+        self.screen.blit(msg, msg.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 80)))
+        cl = self.death_screen_coins_lost
+        xl = self.death_screen_xp_lost
+        gold = self.inventory.count_item('gold_coin')
+        if cl > 0:
+            line_g = loss_font.render(f"Gold lost: {cl} coins  (remaining: {gold})", True, GOLD)
+        else:
+            line_g = loss_font.render("Gold lost: none  (no coins held)", True, UI_TEXT_MUTED)
+        if xl > 0:
+            line_x = loss_font.render(f"XP lost: {xl}", True, (180, 200, 255))
+        elif self.player_level == 1 and self.player_xp == 0:
+            line_x = loss_font.render(
+                "XP lost: none  (at XP floor: level 1, 0 XP)",
+                True,
+                UI_TEXT_MUTED,
+            )
+        else:
+            line_x = loss_font.render(
+                "XP lost: none  (no XP in progress bar)",
+                True,
+                UI_TEXT_MUTED,
+            )
+        self.screen.blit(line_g, line_g.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 28)))
+        self.screen.blit(line_x, line_x.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 2)))
         btn_w, btn_h = 240, 60
         btn_x = WIDTH // 2 - btn_w // 2
-        btn_y = HEIGHT // 2 + 20
+        btn_y = HEIGHT // 2 + 88
         self.respawn_button_rect = pg.Rect(btn_x, btn_y, btn_w, btn_h)
         mouse_over = self.respawn_button_rect.collidepoint(pg.mouse.get_pos())
         btn_color = (160, 30, 30) if mouse_over else (120, 20, 20)
@@ -762,6 +954,8 @@ class Game:
         self.player.max_health = self.player.get_effective_max_health()
         self.player.health = self.player.max_health
         self.manual_target = None
+        self.death_screen_coins_lost = 0
+        self.death_screen_xp_lost = 0
         self.state = 'playing'
 
     def go_to_next_level(self):
@@ -845,27 +1039,31 @@ class Game:
             surf = font_btn.render(text, True, WHITE)
             self.screen.blit(surf, surf.get_rect(center=rect.center))
 
-        hint = font_hint.render("Enter=Continue, N=New World, S=Choose Save", True, GOLD)
+        hint = font_hint.render("Enter=Continue, N=New class+world, S=Choose Save", True, GOLD)
         self.screen.blit(hint, hint.get_rect(center=(WIDTH // 2, panel_y + panel_h - 26)))
 
         if self.save_picker_open:
             self.draw_save_picker()
+        if self.class_picker_for_new_world:
+            self.draw_class_picker_intro()
         self.display.blit(self.screen, (0, 0))
         pg.display.flip()
 
     def draw_save_picker(self):
         """Overlay panel to choose active world save."""
         self.save_picker_slot_rects = []
+        self.save_picker_delete_rects = []
         overlay = pg.Surface((WIDTH, HEIGHT), pg.SRCALPHA)
         overlay.fill((0, 0, 0, 185))
         self.screen.blit(overlay, (0, 0))
-        panel_w, panel_h = 520, 420
+        panel_w, panel_h = 560, 420
         panel_x = (WIDTH - panel_w) // 2
         panel_y = (HEIGHT - panel_h) // 2
         pg.draw.rect(self.screen, (30, 30, 38), (panel_x, panel_y, panel_w, panel_h))
         pg.draw.rect(self.screen, WHITE, (panel_x, panel_y, panel_w, panel_h), 2)
         title_font = pg.font.Font(pg.font.match_font('arial'), 32)
         row_font = pg.font.Font(pg.font.match_font('arial'), 22)
+        del_font = pg.font.Font(pg.font.match_font('arial'), 18)
         hint_font = pg.font.Font(pg.font.match_font('arial'), 15)
         title = title_font.render("Choose Save", True, WHITE)
         self.screen.blit(title, (panel_x + 20, panel_y + 16))
@@ -873,22 +1071,84 @@ class Game:
         y = panel_y + 70
         row_h = 42
         max_rows = 7
+        inner_w = panel_w - 40
+        del_w = 88
+        gap = 8
+        sel_w = inner_w - del_w - gap
+        mx, my = pg.mouse.get_pos()
         for save_name in saves[:max_rows]:
-            rect = pg.Rect(panel_x + 20, y, panel_w - 40, row_h)
-            hover = rect.collidepoint(pg.mouse.get_pos())
-            active = (save_name == self.current_save_name)
-            color = (70, 70, 96) if hover else (50, 50, 70)
+            select_rect = pg.Rect(panel_x + 20, y, sel_w, row_h)
+            del_rect = pg.Rect(select_rect.right + gap, y, del_w, row_h)
+            hover_sel = select_rect.collidepoint(mx, my)
+            hover_del = del_rect.collidepoint(mx, my)
+            active = save_name == self.current_save_name
+            color = (70, 70, 96) if hover_sel else (50, 50, 70)
             if active:
                 color = (85, 95, 140)
-            pg.draw.rect(self.screen, color, rect)
-            pg.draw.rect(self.screen, WHITE, rect, 1)
+            pg.draw.rect(self.screen, color, select_rect)
+            pg.draw.rect(self.screen, WHITE, select_rect, 1)
             label = save_name + ("  (active)" if active else "")
             surf = row_font.render(label, True, WHITE)
-            self.screen.blit(surf, (rect.x + 12, rect.y + 8))
-            self.save_picker_slot_rects.append((rect, save_name))
+            self.screen.blit(surf, (select_rect.x + 12, select_rect.y + 8))
+            self.save_picker_slot_rects.append((select_rect, save_name))
+            del_bg = (140, 65, 65) if hover_del else (100, 45, 45)
+            pg.draw.rect(self.screen, del_bg, del_rect)
+            pg.draw.rect(self.screen, WHITE, del_rect, 1)
+            del_surf = del_font.render("Delete", True, WHITE)
+            self.screen.blit(del_surf, del_surf.get_rect(center=del_rect.center))
+            self.save_picker_delete_rects.append((del_rect, save_name))
             y += row_h + 8
-        hint = hint_font.render("Click save to switch. Click outside or Esc to close.", True, GOLD)
+        hint = hint_font.render(
+            "Click row to switch active save. Delete removes that file. Outside / Esc closes.",
+            True,
+            GOLD,
+        )
         self.screen.blit(hint, (panel_x + 20, panel_y + panel_h - 28))
+
+    def draw_class_picker_intro(self):
+        """Overlay to pick class before create_new_world."""
+        self.class_picker_class_rects = []
+        overlay = pg.Surface((WIDTH, HEIGHT), pg.SRCALPHA)
+        overlay.fill((0, 0, 0, 185))
+        self.screen.blit(overlay, (0, 0))
+        panel_w, panel_h = 640, 470
+        panel_x = (WIDTH - panel_w) // 2
+        panel_y = (HEIGHT - panel_h) // 2
+        pg.draw.rect(self.screen, (28, 28, 36), (panel_x, panel_y, panel_w, panel_h))
+        pg.draw.rect(self.screen, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
+        title_font = pg.font.Font(pg.font.match_font('arial'), 32)
+        body_font = pg.font.Font(pg.font.match_font('arial'), 17)
+        btn_font = pg.font.Font(pg.font.match_font('arial'), 22)
+        self.screen.blit(title_font.render("Choose your class", True, WHITE), (panel_x + 20, panel_y + 14))
+        y = panel_y + 56
+        row_h = 96
+        mx, my = pg.mouse.get_pos()
+        for cid in sorted(CLASS_DEFS.keys()):
+            cdef = CLASS_DEFS[cid]
+            rect = pg.Rect(panel_x + 20, y, panel_w - 40, row_h)
+            sel = cid == self.class_picker_selected_id
+            bg = (85, 95, 130) if sel else (52, 52, 68)
+            if rect.collidepoint(mx, my) and not sel:
+                bg = (68, 70, 88)
+            pg.draw.rect(self.screen, bg, rect)
+            pg.draw.rect(self.screen, GOLD if sel else (100, 100, 120), rect, 2)
+            self.screen.blit(body_font.render(cdef['name'], True, WHITE), (rect.x + 12, rect.y + 10))
+            desc = (cdef.get('description', '') or '')[:140]
+            self.screen.blit(body_font.render(desc, True, UI_TEXT_MUTED), (rect.x + 12, rect.y + 38))
+            self.class_picker_class_rects.append((rect, cid))
+            y += row_h + 10
+        self.class_picker_begin_rect = pg.Rect(panel_x + 20, panel_y + panel_h - 58, panel_w - 40, 44)
+        bh = self.class_picker_begin_rect
+        bcol = (60, 120, 70) if bh.collidepoint(mx, my) else (45, 90, 55)
+        pg.draw.rect(self.screen, bcol, bh)
+        pg.draw.rect(self.screen, WHITE, bh, 2)
+        bsurf = btn_font.render("Begin Adventure", True, WHITE)
+        self.screen.blit(bsurf, bsurf.get_rect(center=bh.center))
+        hint_font = pg.font.Font(pg.font.match_font('arial'), 14)
+        self.screen.blit(
+            hint_font.render("Esc = back  |  Enter = begin with selected class", True, GOLD),
+            (panel_x + 20, panel_y + panel_h - 12),
+        )
 
     def draw_hud(self):
         """Top-left HUD: health bar, attack cooldown bar, labels."""
@@ -906,6 +1166,18 @@ class Game:
             self.screen.fill(HP_BAR_FG, (bar_x, bar_y, fill_w, HUD_HEALTH_BAR_H))
         hp_text = font.render(f"{self.player.health} / {eff_max}", True, WHITE)
         self.screen.blit(hp_text, (bar_x + HUD_HEALTH_BAR_W + 8, bar_y - 2))
+        y += HUD_HEALTH_BAR_H + 12
+        # Level / XP
+        need_xp = xp_for_next_level(self.player_level)
+        label = font.render(f"Level {self.player_level}", True, WHITE)
+        self.screen.blit(label, (x, y))
+        y += HUD_LINE_HEIGHT
+        self.screen.fill(HP_BAR_BG, (x, y, HUD_HEALTH_BAR_W, HUD_HEALTH_BAR_H))
+        if need_xp > 0:
+            fill_w = max(1, int(HUD_HEALTH_BAR_W * min(1.0, self.player_xp / need_xp)))
+            self.screen.fill((70, 110, 200), (x, y, fill_w, HUD_HEALTH_BAR_H))
+        xp_txt = font.render(f"{self.player_xp} / {need_xp} XP", True, WHITE)
+        self.screen.blit(xp_txt, (x + HUD_HEALTH_BAR_W + 8, y - 2))
         y += HUD_HEALTH_BAR_H + 12
         # Attack cooldown
         label = font.render("Attack", True, WHITE)
@@ -1059,16 +1331,17 @@ class Game:
         pg.draw.rect(self.screen, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
 
         hint_shadow = font_sm.render(
-            "E / I / Esc close | Drag swap | R-click equip | Shift+R-click: salvage weapon | Craft tab",
+            "E / I / Esc close | Character / Skills / Craft tabs | Drag equip | Shift+R-click: salvage weapon",
             True, (0, 0, 0))
         self.screen.blit(hint_shadow, (panel_x + 13, panel_y + panel_h - 21))
         close_hint = font_sm.render(
-            "E / I / Esc close | Drag swap | R-click equip | Shift+R-click: salvage weapon | Craft tab",
+            "E / I / Esc close | Character / Skills / Craft tabs | Drag equip | Shift+R-click: salvage weapon",
             True, UI_TEXT_BRIGHT)
         self.screen.blit(close_hint, (panel_x + 12, panel_y + panel_h - 22))
 
-        tab_char = pg.Rect(panel_x + 16, panel_y + 10, 118, 28)
-        tab_craft = pg.Rect(panel_x + 138, panel_y + 10, 118, 28)
+        tab_char = pg.Rect(panel_x + 16, panel_y + 10, 100, 28)
+        tab_skills = pg.Rect(panel_x + 120, panel_y + 10, 100, 28)
+        tab_craft = pg.Rect(panel_x + 224, panel_y + 10, 100, 28)
 
         content_top = panel_y + 46
         left_x = panel_x + 20
@@ -1112,6 +1385,13 @@ class Game:
             section = font.render("Stats", True, GOLD)
             self.screen.blit(section, (left_x, stats_y))
             stats_y += 26
+            cd = get_class_def(self.player_class_id)
+            if cd:
+                self.screen.blit(
+                    font_sm.render(f"Class: {cd['name']}  |  Level {self.player_level}", True, UI_TEXT_MUTED),
+                    (left_x + 8, stats_y),
+                )
+                stats_y += 22
             attrs = self.player.get_effective_attrs()
             bonuses = self.inventory.get_equipment_stat_bonuses()
             for stat in ['strength', 'dexterity', 'intelligence', 'health']:
@@ -1127,6 +1407,64 @@ class Game:
                          f"Defense: {self.inventory.get_total_defense()}"]:
                 self.screen.blit(font_sm.render(text, True, UI_TEXT_BRIGHT), (left_x + 8, stats_y))
                 stats_y += 20
+        elif self.inventory_tab == 'skills':
+            sy = content_top
+            cdef = get_class_def(self.player_class_id)
+            if not cdef:
+                cdef = get_class_def(DEFAULT_CLASS_ID)
+            self.screen.blit(font.render("Skills", True, GOLD), (left_x, sy))
+            sy += 28
+            need_xp = xp_for_next_level(self.player_level)
+            self.screen.blit(
+                font_sm.render(
+                    f"{cdef['name']}  |  Lv.{self.player_level}  |  {self.player_xp}/{need_xp} XP  |  Points: {self.skill_points}",
+                    True,
+                    UI_TEXT_BRIGHT,
+                ),
+                (left_x, sy),
+            )
+            sy += 24
+            self.screen.blit(
+                font_sm.render(
+                    "Spend points on nodes (level and prerequisites required).",
+                    True,
+                    UI_TEXT_MUTED,
+                ),
+                (left_x, sy),
+            )
+            sy += 28
+            row_w = max(200, inv_x - left_x - 28)
+            for node in cdef.get('skill_nodes', []):
+                nid = node['id']
+                owned = nid in self.purchased_skill_nodes
+                can = can_unlock_skill(
+                    self.player_class_id,
+                    nid,
+                    self.player_level,
+                    self.purchased_skill_nodes,
+                    self.skill_points,
+                )
+                row_r = pg.Rect(left_x, sy, row_w, 72)
+                pg.draw.rect(self.screen, (40, 42, 52), row_r)
+                pg.draw.rect(self.screen, (85, 90, 110), row_r, 1)
+                tag = "  (learned)" if owned else ""
+                self.screen.blit(font_md.render(node['name'] + tag, True, WHITE), (row_r.x + 8, row_r.y + 6))
+                self.screen.blit(font_sm.render(node.get('description', ''), True, UI_TEXT_MUTED), (row_r.x + 8, row_r.y + 30))
+                buy_r = pg.Rect(row_r.right - 96, row_r.y + 18, 88, 36)
+                if owned:
+                    col = (48, 48, 52)
+                elif can:
+                    col = (70, 110, 75) if buy_r.collidepoint(mouse_pos) else (50, 88, 58)
+                else:
+                    col = (48, 48, 52)
+                pg.draw.rect(self.screen, col, buy_r)
+                pg.draw.rect(self.screen, (95, 98, 115), buy_r, 1)
+                lbl = "Learn" if not owned else "Done"
+                self.screen.blit(font_sm.render(lbl, True, UI_TEXT_BRIGHT), (buy_r.x + 22, buy_r.y + 9))
+                self.inv_slot_rects.append((buy_r, 'skill_buy', nid))
+                sy += 78
+                if sy > panel_y + panel_h - 120:
+                    break
         else:
             rlist = get_recipe_list()
             known = [r for r in rlist if r['id'] in self.discovered_recipe_ids]
@@ -1257,11 +1595,15 @@ class Game:
                     hovered_item_id = slot_data[0]
 
         tab_hit = []
-        for rect, tid, lbl in ((tab_char, 'character', 'Character'), (tab_craft, 'craft', 'Craft')):
+        for rect, tid, lbl in (
+            (tab_char, 'character', 'Character'),
+            (tab_skills, 'skills', 'Skills'),
+            (tab_craft, 'craft', 'Craft'),
+        ):
             sel = self.inventory_tab == tid
             pg.draw.rect(self.screen, (48, 48, 48), rect)
             pg.draw.rect(self.screen, GOLD if sel else (100, 100, 100), rect, 2)
-            self.screen.blit(font_sm.render(lbl, True, GOLD if sel else WHITE), (rect.x + 18, rect.y + 6))
+            self.screen.blit(font_sm.render(lbl, True, GOLD if sel else WHITE), (rect.x + 14, rect.y + 6))
             tab_hit.append((rect, 'tab', tid))
         self.inv_slot_rects = tab_hit + self.inv_slot_rects
 
@@ -1322,6 +1664,9 @@ class Game:
             lines.append(desc)
         if item.get('base_damage'):
             lines.append(f"Base Damage: {item['base_damage']}")
+        if item.get('type') == 'weapon':
+            rt = item.get('attack_range_tiles', PLAYER_DEFAULT_ATTACK_RANGE_TILES)
+            lines.append(f"Attack range: {rt} tile(s)")
         cd = weapon_cooldown_ms_for_item(item_id)
         if cd is not None:
             lines.append(f"Attack cooldown: {cd} ms (base {PLAYER_ATTACK_COOLDOWN_MS} ms)")
@@ -1394,9 +1739,16 @@ class Game:
                     if self.inventory_tab == 'craft':
                         self.inventory.return_craft_staging()
                     self.inventory_tab = 'character'
+                elif index == 'skills':
+                    if self.inventory_tab == 'craft':
+                        self.inventory.return_craft_staging()
+                    self.inventory_tab = 'skills'
                 else:
                     self.inventory_tab = 'craft'
                     self._sync_discovered_recipes_from_inventory()
+                return
+            if source == 'skill_buy':
+                self.try_purchase_skill_node(index)
                 return
             if source == 'craft_recipe':
                 if self.craft_selected_recipe_id != index:
@@ -1580,7 +1932,8 @@ class Game:
         """Return manual target if valid/in-range, else nearest in-range live mob."""
         px, py = self.player.hit_rect.centerx, self.player.hit_rect.centery
         best = None
-        best_d_sq = PLAYER_ATTACK_RANGE * PLAYER_ATTACK_RANGE
+        pr = self.player.get_effective_attack_range()
+        best_d_sq = pr * pr
         if self.manual_target is not None:
             if self.manual_target.alive() and getattr(self.manual_target, 'state', None) != 'dead':
                 mx = self.manual_target.hit_rect.centerx

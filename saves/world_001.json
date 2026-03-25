@@ -40,10 +40,11 @@
   },
   "selected_hotbar_index": 1,
   "player_health": 150,
-  "current_level": "level3.txt",
+  "current_level": "level2.txt",
   "mob_states": {
     "level1.txt": [],
     "level2.txt": [],
     "level3.txt": []
-  }
+  },
+  "discovered_recipes": []
 }

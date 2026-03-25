@@ -17,6 +17,8 @@
 - `inventory.py` - inventory slots, equipment logic, item stacking, damage/defense calculations
 - `settings.py` - global constants for gameplay, rendering, controls, UI dimensions
 - `data/items.json` - item definitions (stats, descriptions, effects, scaling, stack rules)
+- `data/classes.json` - player classes (starting gear, growth, skill trees)
+- `progression.py` - class helpers, XP curve, skill bonus math
 - `data/mobs.json` - mob archetypes and drop tables
 - `levels/*.txt` - level tilemaps and dungeon progression layout
 - `images/*` - character/mob/wall spritesheets
@@ -82,7 +84,7 @@ Additional modal states:
 - `Esc`: pause menu (when in gameplay), close picker
 - `F11`: toggle fullscreen
 - `Enter`: quick start/continue from title
-- `N`: create new world from title
+- `N`: open **class picker**, then start a **new world** with that class
 - `S`: open save picker from title
 
 ## Player System
@@ -170,6 +172,55 @@ Each item supports fields like:
 
 Includes starter legionnaire gear and multiple weapon archetypes.
 
+## Crafting and recipe discovery
+
+Definitions live in `data/crafting.json` (loaded by `crafting.py`).
+
+- **Weapon types** define **slot layouts** (e.g. sword: hilt, blade, handle, magic; dagger: blade, handle, magic).
+- Each **recipe** has a stable `id`, `display_name`, optional `starts_known`, `discover_on_items` (recipe appears when you pick up those materials), `weapon_type`, `inputs` (slot → item id or `null`), and `output` (`item_id`, `count`).
+- The **Craft** tab lists known recipes; drag items from the bag into the weapon-type slots, then craft.
+
+### Crafting flow (Mermaid)
+
+```mermaid
+flowchart LR
+  subgraph discovery["Discovery"]
+    A[Pick up material] --> B{Item in discover_on_items?}
+    B -->|yes| C[Recipe added to known list]
+    B -->|no| D[No new recipe]
+  end
+  subgraph craft["Crafting"]
+    E[Select recipe] --> F[Drag items into slots]
+    F --> G{All required slots match?}
+    G -->|yes| H[Craft outputs item]
+    G -->|no| I[Cannot craft]
+  end
+  C --> E
+```
+
+## Classes, XP, leveling, and skill trees
+
+- **Classes** are defined in `data/classes.json` (see `progression.py`). Each has `base_attrs`, per-level `level_growth`, `starting_inventory` (`items` + `equipment`), and a `skill_nodes` list (each node: `id`, `name`, `description`, `min_level`, optional `requires` node ids, `stat_bonus`).
+- On **New World**, you choose a class; starting loadout and base stats follow that class.
+- **XP** is granted when a mob dies (see `xp` on each mob in `data/mobs.json`). When current XP reaches the threshold for your level (`xp_for_next_level` in `progression.py`), you level up: **+1 skill point per level**, base attributes grow by class `level_growth`, and stats are recomputed.
+- **Skill points** are spent on the **Skills** inventory tab; bonuses stack into `get_effective_attrs()` alongside equipment.
+
+### Progression overview (Mermaid)
+
+```mermaid
+flowchart TD
+  N1[New World: pick class] --> N2[Starting gear + base attributes]
+  N2 --> P[Play]
+  P --> K[Defeat mob]
+  K --> X[+XP from mobs.json]
+  X --> L{Enough XP to level?}
+  L -->|yes| U[Level up: +1 skill point + class level_growth]
+  U --> P
+  L -->|no| P
+  P --> S[Skills tab: spend points on nodes]
+  S --> P
+```
+
 ## Levels, Doors, and Progression
 
 Level files live in `levels/` and are loaded in order:
@@ -223,11 +274,13 @@ Implemented in `main.py` with per-world JSON saves in `saves/`.
 - player health
 - current level
 - per-level live mob snapshots (position, state, hp, type)
+- `player_class_id`, `player_level`, `player_xp`, `skill_points`, `purchased_skill_nodes`
+- `discovered_recipes`
 
 ### Title menu world controls
 
 - `Start / Continue` - play active world
-- `New World` - create new world save and start fresh
+- `New World` - pick **class** (Legionnaire / Assassin / Arcanist), then create a new save and start with that role’s **starting gear**
 - `Choose Save` - open picker and switch active world
 
 Legacy migration:
@@ -250,13 +303,16 @@ Legacy migration:
 ### HUD
 
 - Health bar + values
+- Level + XP bar toward next level
 - Attack cooldown/readiness bar
 
 ### Inventory screen
 
+- Tabs: **Character** | **Skills** | **Craft**
 - Player preview
 - Equipment slots + labels
-- Stats and derived combat values
+- Stats and derived combat values (class + level growth + equipment + skills)
+- **Skills**: spend skill points on class nodes (level + prerequisite gates)
 - Inventory grid + hotbar highlighting
 - Tooltips and drag ghost
 

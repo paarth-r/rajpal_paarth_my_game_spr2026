@@ -13,7 +13,10 @@ PLAYER_SPEED = 128  # small multiple of TILESIZE (32)
 PLAYER_HIT_RECT = pg.Rect(0, 0, TILESIZE - 5, TILESIZE - 5)
 PLAYER_ANIM_SPEED = 150
 PLAYER_ATTACK_SPEED = 100
-PLAYER_ATTACK_RANGE = TILESIZE * 2  # radius in pixels; any attackable in this range is auto-targeted
+# Default melee reach in tiles (weapons override via items.json attack_range_tiles)
+PLAYER_DEFAULT_ATTACK_RANGE_TILES = 2
+# Legacy pixel radius when no weapon / fallback (matches 2 tiles)
+PLAYER_ATTACK_RANGE = TILESIZE * PLAYER_DEFAULT_ATTACK_RANGE_TILES
 PLAYER_MAX_HEALTH = 100
 PLAYER_ATTACK_DAMAGE = 50
 PLAYER_ATTACK_COOLDOWN_MS = 400  # ms after attack ends before next attack allowed (HUD shows this)
@@ -29,7 +32,7 @@ MOB_ATTACK_COOLDOWN = 4000  # ms between attacks (easier to dodge)
 MOB_ATTACK_RANGE = TILESIZE * 1.2  # shorter reach, must get close
 MOB_ATTACK_ANIM_SPEED = 150  # ms per attack frame (slower windup, telegraphed)
 PLAYER_HURT_COOLDOWN = 800  # ms before player can be hurt again
-# statue spritesheet: 512x256 image, 8 cols x 4 rows = 64x64 per frame (row 0 idle, 1 walk, 2 attack, 3 death)
+# statue spritesheet (statue.png): 1016x534; 8×4 grid of ~127×133 px cells (row 0 idle, 1 walk, 2 attack, 3 death)
 MOB_FRAME_W = 64
 MOB_FRAME_H = 64
 MOB_ANIM_SPEED = 120  # ms per frame
@@ -115,3 +118,7 @@ PLAYER_BASE_ATTRS = {
 }
 HEALTH_ATTR_HP_BONUS = 5
 DEXTERITY_SPEED_BONUS = 2
+
+# Death penalties (fraction of current gold / current XP bar; floors apply — see Game._apply_death_penalties)
+DEATH_GOLD_LOSS_PCT = 0.25
+DEATH_XP_LOSS_PCT = 0.25

@@ -1,0 +1,195 @@
+{
+    "classes": [
+        {
+            "id": "legionnaire",
+            "name": "Legionnaire",
+            "description": "Front-line fighter. High strength, heavy armor, reliable swordplay.",
+            "base_attrs": {
+                "strength": 8,
+                "dexterity": 4,
+                "intelligence": 3,
+                "health": 14
+            },
+            "level_growth": {
+                "strength": 1,
+                "dexterity": 0,
+                "intelligence": 0,
+                "health": 1
+            },
+            "starting_inventory": {
+                "items": {
+                    "gold_coin": 5,
+                    "health_potion": 2
+                },
+                "equipment": {
+                    "weapon": "gladius",
+                    "head": "legion_helm",
+                    "chest": "legion_cuirass",
+                    "boots": "legion_boots"
+                }
+            },
+            "skill_nodes": [
+                {
+                    "id": "leg_brutality",
+                    "name": "Brutality",
+                    "description": "+2 Strength.",
+                    "min_level": 1,
+                    "requires": [],
+                    "stat_bonus": { "strength": 2 }
+                },
+                {
+                    "id": "leg_discipline",
+                    "name": "Discipline",
+                    "description": "+3 Health attribute.",
+                    "min_level": 1,
+                    "requires": [],
+                    "stat_bonus": { "health": 3 }
+                },
+                {
+                    "id": "leg_veteran",
+                    "name": "Veteran",
+                    "description": "+2 Strength, +1 Health.",
+                    "min_level": 3,
+                    "requires": ["leg_brutality"],
+                    "stat_bonus": { "strength": 2, "health": 1 }
+                },
+                {
+                    "id": "leg_bulwark",
+                    "name": "Bulwark",
+                    "description": "+4 Health attribute.",
+                    "min_level": 5,
+                    "requires": ["leg_discipline"],
+                    "stat_bonus": { "health": 4 }
+                }
+            ]
+        },
+        {
+            "id": "assassin",
+            "name": "Assassin",
+            "description": "Skirmisher. High dexterity, light gear, fast strikes.",
+            "base_attrs": {
+                "strength": 4,
+                "dexterity": 9,
+                "intelligence": 3,
+                "health": 10
+            },
+            "level_growth": {
+                "strength": 0,
+                "dexterity": 1,
+                "intelligence": 0,
+                "health": 0
+            },
+            "starting_inventory": {
+                "items": {
+                    "gold_coin": 6,
+                    "health_potion": 2,
+                    "iron_scrap": 3
+                },
+                "equipment": {
+                    "weapon": "pugio",
+                    "head": "legion_helm",
+                    "chest": "legion_cuirass",
+                    "boots": "caligae"
+                }
+            },
+            "skill_nodes": [
+                {
+                    "id": "ass_blade",
+                    "name": "Blade Practice",
+                    "description": "+2 Dexterity.",
+                    "min_level": 1,
+                    "requires": [],
+                    "stat_bonus": { "dexterity": 2 }
+                },
+                {
+                    "id": "ass_shadow",
+                    "name": "Shadow Step",
+                    "description": "+1 Dexterity, +2 Health.",
+                    "min_level": 2,
+                    "requires": [],
+                    "stat_bonus": { "dexterity": 1, "health": 2 }
+                },
+                {
+                    "id": "ass_lethal",
+                    "name": "Lethal Focus",
+                    "description": "+3 Dexterity.",
+                    "min_level": 4,
+                    "requires": ["ass_blade"],
+                    "stat_bonus": { "dexterity": 3 }
+                },
+                {
+                    "id": "ass_survivor",
+                    "name": "Survivor",
+                    "description": "+5 Health attribute.",
+                    "min_level": 6,
+                    "requires": ["ass_shadow"],
+                    "stat_bonus": { "health": 5 }
+                }
+            ]
+        },
+        {
+            "id": "arcanist",
+            "name": "Arcanist",
+            "description": "Scholar of old forces. High intelligence, staff focus, brittle but deadly.",
+            "base_attrs": {
+                "strength": 3,
+                "dexterity": 4,
+                "intelligence": 9,
+                "health": 10
+            },
+            "level_growth": {
+                "strength": 0,
+                "dexterity": 0,
+                "intelligence": 1,
+                "health": 0
+            },
+            "starting_inventory": {
+                "items": {
+                    "gold_coin": 5,
+                    "health_potion": 3,
+                    "arcane_sliver": 4
+                },
+                "equipment": {
+                    "weapon": "arcane_staff",
+                    "head": "legion_helm",
+                    "chest": "lorica",
+                    "boots": "legion_boots"
+                }
+            },
+            "skill_nodes": [
+                {
+                    "id": "arc_focus",
+                    "name": "Arcane Focus",
+                    "description": "+2 Intelligence.",
+                    "min_level": 1,
+                    "requires": [],
+                    "stat_bonus": { "intelligence": 2 }
+                },
+                {
+                    "id": "arc_ward",
+                    "name": "Warding",
+                    "description": "+4 Health attribute.",
+                    "min_level": 1,
+                    "requires": [],
+                    "stat_bonus": { "health": 4 }
+                },
+                {
+                    "id": "arc_scholar",
+                    "name": "Scholar",
+                    "description": "+3 Intelligence, +1 Health.",
+                    "min_level": 3,
+                    "requires": ["arc_focus"],
+                    "stat_bonus": { "intelligence": 3, "health": 1 }
+                },
+                {
+                    "id": "arc_mind",
+                    "name": "Mind Over Matter",
+                    "description": "+2 Intelligence, +3 Health.",
+                    "min_level": 5,
+                    "requires": ["arc_ward"],
+                    "stat_bonus": { "intelligence": 2, "health": 3 }
+                }
+            ]
+        }
+    ]
+}

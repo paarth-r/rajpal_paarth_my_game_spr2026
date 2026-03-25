@@ -153,10 +153,13 @@ class Player(Sprite):
         self.image = self.attack_frames[self.facing][0]
 
     def get_effective_attrs(self):
-        """Base attrs + equipment bonuses."""
+        """Base attrs + equipment bonuses + skill tree."""
         attrs = dict(self.base_attrs)
         if hasattr(self.game, 'inventory'):
             for stat, val in self.game.inventory.get_equipment_stat_bonuses().items():
+                attrs[stat] = attrs.get(stat, 0) + val
+        if hasattr(self.game, 'get_skill_attr_bonuses'):
+            for stat, val in self.game.get_skill_attr_bonuses().items():
                 attrs[stat] = attrs.get(stat, 0) + val
         return attrs
 
@@ -168,6 +171,12 @@ class Player(Sprite):
         if hasattr(self.game, 'inventory'):
             return self.game.inventory.get_weapon_damage(self.get_effective_attrs())
         return PLAYER_ATTACK_DAMAGE
+
+    def get_effective_attack_range(self):
+        """Attack radius in world pixels (from equipped weapon attack_range_tiles)."""
+        if hasattr(self.game, 'inventory'):
+            return self.game.inventory.get_weapon_attack_range_px()
+        return PLAYER_ATTACK_RANGE
 
     def recalc_stats(self):
         """Recalculate derived stats from attributes (call after equip changes)."""
@@ -198,7 +207,7 @@ class Player(Sprite):
         """Rect in front of player used for hitting mobs. Only valid while attacking."""
         if not self.attacking:
             return None
-        pad = PLAYER_ATTACK_RANGE
+        pad = self.get_effective_attack_range()
         r = self.hit_rect.inflate(4, 4).copy()
         if self.facing == 'left':
             r.left = self.hit_rect.left - pad
@@ -370,6 +379,8 @@ class Mob(Sprite):
 
         if path.exists(sprite_path):
             sheet = Spritesheet(sprite_path)
+            if d.get('key_checkerboard_grays'):
+                key_checkerboard_placeholder(sheet.spritesheet)
             if d.get('center_grid_on_sheet'):
                 gc = int(d.get('sheet_grid_cols', 8))
                 gr = int(d.get('sheet_grid_rows', 4))
@@ -487,13 +498,16 @@ class Mob(Sprite):
     def hurt(self, damage):
         if self.state == 'dead':
             return
+        old_hp = self.health
         self.health = max(0, self.health - damage)
-        if self.health <= 0:
+        if self.health <= 0 and old_hp > 0:
             self.state = 'dead'
             self.anim_frame = 0
             self.last_anim = pg.time.get_ticks()
             self.vel = vec(0, 0)
             self._update_image_cache(self.death_frames[0])
+            if hasattr(self.game, 'on_mob_kill'):
+                self.game.on_mob_kill(self)
 
     def update(self):
         now = pg.time.get_ticks()

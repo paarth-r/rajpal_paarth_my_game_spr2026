@@ -2,32 +2,20 @@
   "slots": [
     [
       "gold_coin",
-      43
-    ],
-    [
-      "stone_hammer",
-      1
-    ],
-    [
-      "gladius",
-      1
+      6
     ],
     [
       "health_potion",
-      4
+      2
     ],
     [
-      "stone_hammer",
-      1
+      "iron_scrap",
+      3
     ],
-    [
-      "stone_hammer",
-      1
-    ],
-    [
-      "assassins_grace",
-      1
-    ],
+    null,
+    null,
+    null,
+    null,
     null,
     null,
     null,
@@ -47,27 +35,65 @@
     null
   ],
   "equipment": {
-    "weapon": null,
+    "weapon": "pugio",
     "head": "legion_helm",
     "chest": "legion_cuirass",
-    "boots": "legion_boots",
+    "boots": "caligae",
     "shield": null
   },
-  "selected_hotbar_index": 3,
-  "player_health": 60,
-  "current_level": "level3.txt",
+  "selected_hotbar_index": 0,
+  "player_health": 100,
+  "current_level": "level1.txt",
   "mob_states": {
-    "level1.txt": [],
-    "level2.txt": [],
-    "level3.txt": [
+    "level1.txt": [
       {
-        "tile_x": 18,
-        "tile_y": 19,
-        "health": 150,
+        "tile_x": 6,
+        "tile_y": 1,
+        "health": 200,
         "state": "inactive",
-        "mob_type": "shadow_assassin"
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 2,
+        "tile_y": 3,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 17,
+        "tile_y": 7,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 26,
+        "tile_y": 7,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 21,
+        "tile_y": 20,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 20,
+        "tile_y": 21,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
       }
     ]
   },
-  "discovered_recipes": []
+  "discovered_recipes": [],
+  "player_class_id": "assassin",
+  "player_level": 1,
+  "player_xp": 0,
+  "skill_points": 0,
+  "purchased_skill_nodes": []
 }

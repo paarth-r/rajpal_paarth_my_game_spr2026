@@ -16,6 +16,8 @@ def load_item_defs():
     for item_id, d in raw.items():
         d['color'] = tuple(d.get('color', [200, 200, 200]))
         d.setdefault('rarity', 'common')
+        if d.get('type') == 'weapon':
+            d.setdefault('attack_range_tiles', PLAYER_DEFAULT_ATTACK_RANGE_TILES)
         defs[item_id] = d
     return defs
 
@@ -150,6 +152,26 @@ class Inventory:
             self.set_slot(slot_index, item_id, current - remove)
         return True
 
+    def remove_item_by_id(self, item_id, amount):
+        """Remove up to amount of item_id from bag slots. Returns how many were removed."""
+        if amount <= 0 or item_id not in ITEM_DEFS:
+            return 0
+        remaining = amount
+        removed = 0
+        for i in range(self.num_slots):
+            if remaining <= 0:
+                break
+            s = self.slots[i]
+            if s is None or s[0] != item_id:
+                continue
+            _, c = s
+            take = min(remaining, c)
+            if take > 0:
+                self.remove_item(i, take)
+                removed += take
+                remaining -= take
+        return removed
+
     def get_hotbar_slot(self, hotbar_index):
         if 0 <= hotbar_index < self.hotbar_size:
             return self.get_slot(hotbar_index)
@@ -246,3 +268,16 @@ class Inventory:
         bonus = int(weapon.get('attack_speed_bonus', 0))
         # Negative bonus = faster weapon. Keep a safe floor.
         return max(80, int(base_cooldown_ms + bonus))
+
+    def get_weapon_attack_range_px(self):
+        """Radius in world pixels for auto-attack targeting (from weapon attack_range_tiles)."""
+        weapon_id = self.equipment.get('weapon')
+        if weapon_id is None:
+            return 0
+        weapon = ITEM_DEFS.get(weapon_id, {})
+        tiles = weapon.get('attack_range_tiles', PLAYER_DEFAULT_ATTACK_RANGE_TILES)
+        try:
+            tiles = float(tiles)
+        except (TypeError, ValueError):
+            tiles = float(PLAYER_DEFAULT_ATTACK_RANGE_TILES)
+        return max(1, int(round(tiles * TILESIZE)))

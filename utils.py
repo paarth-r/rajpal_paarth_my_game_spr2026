@@ -48,6 +48,22 @@ class Camera:
         self.camera = pg.Rect(x, y, self.view_w, self.view_h)
 
 
+def key_checkerboard_placeholder(surf):
+    """Turn baked-in checkerboard fills into real transparency.
+
+    Some PNGs use opaque dark grays (common export pattern) instead of an alpha channel.
+    Mutates surf in place; surf must be per-pixel alpha (e.g. convert_alpha()).
+    """
+    rgb = pg.surfarray.array3d(surf)
+    mask = ((rgb[:, :, 0] == 20) & (rgb[:, :, 1] == 20) & (rgb[:, :, 2] == 20)) | (
+        (rgb[:, :, 0] == 30) & (rgb[:, :, 1] == 30) & (rgb[:, :, 2] == 30)
+    )
+    alpha = pg.surfarray.pixels_alpha(surf)
+    alpha[mask] = 0
+    del alpha
+    return surf
+
+
 class Spritesheet:
     def __init__(self, filename):
         self.spritesheet = pg.image.load(filename).convert_alpha()

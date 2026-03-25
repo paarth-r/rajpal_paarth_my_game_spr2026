@@ -2,21 +2,21 @@
   "slots": [
     [
       "gold_coin",
-      24
-    ],
-    null,
-    [
-      "stone_chip",
-      8
-    ],
-    [
-      "galea",
-      1
+      15
     ],
     [
       "health_potion",
+      3
+    ],
+    [
+      "arcane_sliver",
+      4
+    ],
+    [
+      "stone_hammer",
       1
     ],
+    null,
     null,
     null,
     null,
@@ -38,33 +38,37 @@
     null
   ],
   "equipment": {
-    "weapon": "gladius",
+    "weapon": "arcane_staff",
     "head": "legion_helm",
-    "chest": "legion_cuirass",
+    "chest": "lorica",
     "boots": "legion_boots",
     "shield": null
   },
-  "selected_hotbar_index": 2,
-  "player_health": 150,
-  "current_level": "level2.txt",
+  "selected_hotbar_index": 0,
+  "player_health": 250,
+  "current_level": "level1.txt",
   "mob_states": {
-    "level1.txt": [],
-    "level2.txt": [
+    "level1.txt": [
       {
-        "tile_x": 18,
-        "tile_y": 5,
+        "tile_x": 21,
+        "tile_y": 20,
         "health": 200,
         "state": "inactive",
         "mob_type": "statue"
       },
       {
-        "tile_x": 9,
-        "tile_y": 9,
+        "tile_x": 20,
+        "tile_y": 21,
         "health": 200,
-        "state": "idle",
+        "state": "inactive",
         "mob_type": "statue"
       }
     ]
   },
-  "discovered_recipes": []
+  "discovered_recipes": [],
+  "player_class_id": "arcanist",
+  "player_level": 3,
+  "player_xp": 90,
+  "skill_points": 2,
+  "purchased_skill_nodes": []
 }
