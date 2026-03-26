@@ -2,7 +2,7 @@
   "slots": [
     [
       "gold_coin",
-      27
+      36
     ],
     [
       "stone_chip",
@@ -12,14 +12,23 @@
       "arcane_sliver",
       4
     ],
-    null,
+    [
+      "health_potion",
+      2
+    ],
     [
       "wood_splinter",
       1
     ],
+    [
+      "assassins_grace",
+      1
+    ],
     null,
-    null,
-    null,
+    [
+      "assassins_grace",
+      1
+    ],
     null,
     null,
     null,
@@ -44,25 +53,35 @@
     "boots": "legion_boots",
     "shield": null
   },
-  "selected_hotbar_index": 1,
-  "player_health": 190,
-  "current_level": "level2.txt",
+  "selected_hotbar_index": 6,
+  "player_health": 130,
+  "current_level": "level3.txt",
   "mob_states": {
     "level1.txt": [],
-    "level2.txt": [
+    "level2.txt": [],
+    "level3.txt": [
       {
-        "tile_x": 18,
-        "tile_y": 5,
-        "health": 200,
+        "tile_x": 27,
+        "tile_y": 11,
+        "health": 150,
         "state": "inactive",
-        "mob_type": "statue"
+        "mob_type": "shadow_assassin"
+      },
+      {
+        "tile_x": 27,
+        "tile_y": 18,
+        "health": 150,
+        "state": "inactive",
+        "mob_type": "shadow_assassin"
       }
     ]
   },
-  "discovered_recipes": [],
+  "discovered_recipes": [
+    "assassins_grace"
+  ],
   "player_class_id": "arcanist",
   "player_level": 5,
-  "player_xp": 20,
+  "player_xp": 110,
   "skill_points": 0,
   "purchased_skill_nodes": [
     "arc_focus",

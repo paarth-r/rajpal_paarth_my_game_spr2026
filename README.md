@@ -101,6 +101,38 @@ Implemented in `sprites.py` (`Player` class):
 
 Attack is blocked when no weapon is equipped.
 
+### Attribute effects (actual gameplay impact)
+
+Attributes come from:
+
+- class base stats + per-level class growth (`data/classes.json`)
+- equipped item `stat_bonus` values (`data/items.json`)
+- purchased skill node `stat_bonus` values (`data/classes.json`)
+
+Current runtime effects:
+
+- `health`
+  - Increases max HP through `Player.get_effective_max_health()`.
+  - Formula: `max_hp = PLAYER_MAX_HEALTH + health * HEALTH_ATTR_HP_BONUS`.
+  - With current settings, each +1 health attribute gives +5 max HP.
+- `strength`
+  - Increases weapon damage for **all** weapons via a global multiplier.
+  - Formula component in `Inventory.get_weapon_damage()`: `base_damage * (1 + strength / 20)`.
+- `dexterity` and `intelligence`
+  - Affect damage when the equipped weapon scales with that stat (`scaling_stat`, `scaling_factor` in item defs).
+  - Added as flat bonus in formula: `+ (scaling_stat_value * scaling_factor)`.
+  - Example: daggers typically scale from dexterity; staves scale from intelligence.
+
+Weapon-specific modifiers that combine with attributes:
+
+- `attack_speed_bonus` modifies attack cooldown (negative = faster, positive = slower).
+- `attack_range_tiles` sets reach/range (minimum 2 tiles enforced by code).
+- Staff weapons are ranged/projectile weapons and use a reduced damage multiplier for balance.
+
+Important implementation note:
+
+- `Defense` is currently shown in the character UI from equipped armor totals, but incoming damage reduction from defense is not yet applied in combat calculations.
+
 ## Mob System
 
 Implemented in `sprites.py` (`Mob` class), data-driven from `data/mobs.json`.

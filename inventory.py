@@ -35,6 +35,11 @@ def weapon_cooldown_ms_for_item(item_id):
     return max(80, int(PLAYER_ATTACK_COOLDOWN_MS + bonus))
 
 
+def item_is_ranged_weapon(item_def):
+    """All staff-class weapons are ranged/projectile weapons."""
+    return item_def.get('type') == 'weapon' and item_def.get('weapon_type') == 'staff'
+
+
 class Inventory:
     """Slot-based inventory with equipment. Each slot is (item_id, count) or None."""
 
@@ -257,7 +262,10 @@ class Inventory:
         scaling_stat = weapon.get('scaling_stat', 'strength')
         scaling_factor = weapon.get('scaling_factor', 0.0)
         scaling_val = player_attrs.get(scaling_stat, 0)
-        return int(base * (1 + strength / 20) + scaling_val * scaling_factor)
+        dmg = int(base * (1 + strength / 20) + scaling_val * scaling_factor)
+        if item_is_ranged_weapon(weapon):
+            dmg = max(1, int(round(dmg * RANGED_WEAPON_DAMAGE_MULT)))
+        return dmg
 
     def get_weapon_cooldown_ms(self, base_cooldown_ms):
         """Return cooldown adjusted by equipped weapon attack_speed_bonus."""
@@ -271,13 +279,24 @@ class Inventory:
 
     def get_weapon_attack_range_px(self):
         """Radius in world pixels for auto-attack targeting (from weapon attack_range_tiles)."""
+        tiles = self.get_weapon_attack_range_tiles()
+        return max(1, int(round(tiles * TILESIZE)))
+
+    def get_weapon_attack_range_tiles(self):
+        """Attack range in tiles, clamped so all weapon attacks are at least 2 tiles."""
         weapon_id = self.equipment.get('weapon')
         if weapon_id is None:
-            return 0
+            return 0.0
         weapon = ITEM_DEFS.get(weapon_id, {})
         tiles = weapon.get('attack_range_tiles', PLAYER_DEFAULT_ATTACK_RANGE_TILES)
         try:
             tiles = float(tiles)
         except (TypeError, ValueError):
             tiles = float(PLAYER_DEFAULT_ATTACK_RANGE_TILES)
-        return max(1, int(round(tiles * TILESIZE)))
+        return max(float(MIN_WEAPON_ATTACK_RANGE_TILES), tiles)
+
+    def is_weapon_ranged(self):
+        weapon_id = self.equipment.get('weapon')
+        if weapon_id is None:
+            return False
+        return item_is_ranged_weapon(ITEM_DEFS.get(weapon_id, {}))

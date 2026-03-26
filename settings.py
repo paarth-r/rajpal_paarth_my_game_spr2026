@@ -17,9 +17,14 @@ PLAYER_ATTACK_SPEED = 100
 PLAYER_DEFAULT_ATTACK_RANGE_TILES = 2
 # Legacy pixel radius when no weapon / fallback (matches 2 tiles)
 PLAYER_ATTACK_RANGE = TILESIZE * PLAYER_DEFAULT_ATTACK_RANGE_TILES
+MIN_WEAPON_ATTACK_RANGE_TILES = 2
 PLAYER_MAX_HEALTH = 100
 PLAYER_ATTACK_DAMAGE = 50
 PLAYER_ATTACK_COOLDOWN_MS = 400  # ms after attack ends before next attack allowed (HUD shows this)
+# Ranged attacks (all staff weapons) trade damage for safety.
+RANGED_WEAPON_DAMAGE_MULT = 0.7
+PROJECTILE_SPEED_PX_PER_SEC = 640
+PROJECTILE_RADIUS_PX = 5
 
 # mob values (statue: idle until player in range, then chase/attack)
 MOB_ACTIVATION_RANGE_TILES = 5  # blocks; mob stays "idle still" (row 0 frame 0) until player this close

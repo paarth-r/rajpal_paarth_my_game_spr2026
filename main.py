@@ -2,10 +2,13 @@
 Main file responsible for game loop including input, update, and draw methods.
 '''
 
+
+
 import pygame as pg
 import sys
 import json
 import os
+from collections import deque
 from os import path
 from settings import *
 from sprites import *
@@ -374,6 +377,7 @@ class Game:
         self.all_sprites = pg.sprite.Group()
         self.all_walls = pg.sprite.Group()
         self.all_mobs = pg.sprite.Group()
+        self.all_projectiles = pg.sprite.Group()
         self.all_drops = pg.sprite.Group()
         self.checkpoint_tile = None
         self.level_exit_tiles = []
@@ -404,6 +408,7 @@ class Game:
             self.checkpoint_tile = player_spawn
         if player_spawn is None:
             player_spawn = self.checkpoint_tile if self.checkpoint_tile else (1, 1)
+        reachable_tiles = self._compute_reachable_tiles_from(player_spawn[0], player_spawn[1])
 
         if create_player or not hasattr(self, 'player') or self.player is None:
             self.player = Player(self, player_spawn[0], player_spawn[1])
@@ -422,6 +427,8 @@ class Game:
             for m in saved_mobs:
                 tx = int(m.get('tile_x', 0))
                 ty = int(m.get('tile_y', 0))
+                if (tx, ty) not in reachable_tiles:
+                    continue
                 mob_type = m.get('mob_type', 'statue')
                 health = int(m.get('health', MOB_HP))
                 if health <= 0:
@@ -437,11 +444,40 @@ class Game:
                 else:
                     col, row = spawn
                     mob_type = 'statue'
+                if (col, row) not in reachable_tiles:
+                    continue
                 Mob(self, col, row, mob_type=mob_type)
 
         self.level_exit_open = len([m for m in self.all_mobs if getattr(m, 'state', None) != 'dead']) == 0
         self.camera = Camera(self.map.width, self.map.height)
         self.manual_target = None
+
+    def _compute_reachable_tiles_from(self, start_col, start_row):
+        """Flood-fill passable map tiles (everything except walls) from the given start."""
+        h = len(self.map.data)
+        w = len(self.map.data[0]) if h > 0 else 0
+        if w == 0 or h == 0:
+            return set()
+        if not (0 <= start_col < w and 0 <= start_row < h):
+            return set()
+        if self.map.data[start_row][start_col] == '1':
+            return set()
+        q = deque()
+        q.append((start_col, start_row))
+        seen = {(start_col, start_row)}
+        while q:
+            c, r = q.popleft()
+            for dc, dr in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nc, nr = c + dc, r + dr
+                if not (0 <= nc < w and 0 <= nr < h):
+                    continue
+                if (nc, nr) in seen:
+                    continue
+                if self.map.data[nr][nc] == '1':
+                    continue
+                seen.add((nc, nr))
+                q.append((nc, nr))
+        return seen
 
     def run(self):
         while self.running:
@@ -726,10 +762,14 @@ class Game:
         if self.manual_target is not None:
             if (not self.manual_target.alive()) or getattr(self.manual_target, 'state', None) == 'dead':
                 self.manual_target = None
-        # Player attack: auto-target one attackable entity within range (regardless of facing)
+        # Player attack: direct melee hit or projectile launch, depending on weapon type.
         if self.player.attacking and not self.player.attack_hit_dealt:
             best = self._get_best_attack_target()
-            if best is not None:
+            if self.player.is_ranged_weapon():
+                if best is not None:
+                    self._spawn_player_projectile(best)
+                    self.player.attack_hit_dealt = True
+            elif best is not None:
                 best.hurt(self.player.get_effective_damage())
                 self.player.attack_hit_dealt = True
         player_tile = (self.player.tile_x, self.player.tile_y)
@@ -1062,14 +1102,15 @@ class Game:
         pg.draw.rect(self.screen, (30, 30, 38), (panel_x, panel_y, panel_w, panel_h))
         pg.draw.rect(self.screen, WHITE, (panel_x, panel_y, panel_w, panel_h), 2)
         title_font = pg.font.Font(pg.font.match_font('arial'), 32)
-        row_font = pg.font.Font(pg.font.match_font('arial'), 22)
+        row_font = pg.font.Font(pg.font.match_font('arial'), 20)
+        row_sub_font = pg.font.Font(pg.font.match_font('arial'), 14)
         del_font = pg.font.Font(pg.font.match_font('arial'), 18)
         hint_font = pg.font.Font(pg.font.match_font('arial'), 15)
         title = title_font.render("Choose Save", True, WHITE)
         self.screen.blit(title, (panel_x + 20, panel_y + 16))
         saves = self.list_save_files()
         y = panel_y + 70
-        row_h = 42
+        row_h = 54
         max_rows = 7
         inner_w = panel_w - 40
         del_w = 88
@@ -1089,7 +1130,10 @@ class Game:
             pg.draw.rect(self.screen, WHITE, select_rect, 1)
             label = save_name + ("  (active)" if active else "")
             surf = row_font.render(label, True, WHITE)
-            self.screen.blit(surf, (select_rect.x + 12, select_rect.y + 8))
+            self.screen.blit(surf, (select_rect.x + 12, select_rect.y + 5))
+            class_name = self._get_save_class_name(save_name)
+            class_surf = row_sub_font.render(f"Class: {class_name}", True, UI_TEXT_MUTED)
+            self.screen.blit(class_surf, (select_rect.x + 12, select_rect.y + 30))
             self.save_picker_slot_rects.append((select_rect, save_name))
             del_bg = (140, 65, 65) if hover_del else (100, 45, 45)
             pg.draw.rect(self.screen, del_bg, del_rect)
@@ -1104,6 +1148,21 @@ class Game:
             GOLD,
         )
         self.screen.blit(hint, (panel_x + 20, panel_y + panel_h - 28))
+
+    def _get_save_class_name(self, save_name):
+        """Display name of class saved in a world file (fallback: default class)."""
+        fp = path.join(self.saves_dir, save_name)
+        class_id = DEFAULT_CLASS_ID
+        try:
+            with open(fp, 'r') as f:
+                payload = json.load(f)
+            class_id = payload.get('player_class_id', DEFAULT_CLASS_ID)
+        except Exception:
+            class_id = DEFAULT_CLASS_ID
+        cdef = get_class_def(class_id)
+        if cdef:
+            return cdef.get('name', 'Unknown')
+        return get_class_def(DEFAULT_CLASS_ID).get('name', 'Legionnaire')
 
     def draw_class_picker_intro(self):
         """Overlay to pick class before create_new_world."""
@@ -1957,6 +2016,17 @@ class Game:
                 best_d_sq = d_sq
                 best = mob
         return best
+
+    def _spawn_player_projectile(self, target):
+        """Fire a projectile locked to the chosen auto-target."""
+        start = vec(self.player.hit_rect.centerx, self.player.hit_rect.centery)
+        Projectile(
+            self,
+            start_pos=start,
+            target=target,
+            damage=self.player.get_effective_damage(),
+            max_range_px=self.player.get_effective_attack_range(),
+        )
 
 
 if __name__ == "__main__":

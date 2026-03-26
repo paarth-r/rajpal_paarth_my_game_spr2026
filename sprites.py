@@ -178,6 +178,11 @@ class Player(Sprite):
             return self.game.inventory.get_weapon_attack_range_px()
         return PLAYER_ATTACK_RANGE
 
+    def is_ranged_weapon(self):
+        if hasattr(self.game, 'inventory'):
+            return self.game.inventory.is_weapon_ranged()
+        return False
+
     def recalc_stats(self):
         """Recalculate derived stats from attributes (call after equip changes)."""
         new_max = self.get_effective_max_health()
@@ -677,6 +682,54 @@ class Wall(Sprite):
 
     def update(self):
         pass
+
+
+class Projectile(Sprite):
+    """Target-locked projectile for ranged staff attacks."""
+
+    def __init__(self, game, start_pos, target, damage, max_range_px, color=(120, 180, 255)):
+        self.groups = game.all_sprites, game.all_projectiles
+        Sprite.__init__(self, self.groups)
+        self.game = game
+        self.pos = vec(start_pos)
+        self.target = target
+        self.damage = max(1, int(damage))
+        self.max_range_px = max(1.0, float(max_range_px))
+        self.traveled_px = 0.0
+        d = max(4, PROJECTILE_RADIUS_PX * 2)
+        self.image = pg.Surface((d, d), pg.SRCALPHA)
+        pg.draw.circle(self.image, color, (d // 2, d // 2), PROJECTILE_RADIUS_PX)
+        pg.draw.circle(self.image, WHITE, (d // 2, d // 2), PROJECTILE_RADIUS_PX, 1)
+        self.rect = self.image.get_rect(center=(int(self.pos.x), int(self.pos.y)))
+
+    def update(self):
+        if self.target is None or (not self.target.alive()) or getattr(self.target, 'state', None) == 'dead':
+            self.kill()
+            return
+        target_pos = vec(self.target.hit_rect.centerx, self.target.hit_rect.centery)
+        to_target = target_pos - self.pos
+        if to_target.length_squared() <= 0:
+            self.target.hurt(self.damage)
+            self.kill()
+            return
+        vel = to_target.normalize()
+        step = vel * PROJECTILE_SPEED_PX_PER_SEC * max(0.0, float(self.game.dt))
+        self.pos += step
+        self.traveled_px += step.length()
+        self.rect.center = (int(self.pos.x), int(self.pos.y))
+        if self.traveled_px >= self.max_range_px:
+            self.kill()
+            return
+        if not (0 <= self.pos.x <= self.game.map.width and 0 <= self.pos.y <= self.game.map.height):
+            self.kill()
+            return
+        if pg.sprite.spritecollideany(self, self.game.all_walls):
+            self.kill()
+            return
+        if self.rect.colliderect(self.target.hit_rect):
+            self.target.hurt(self.damage)
+            self.kill()
+            return
 
 
 class Coin(Sprite):
