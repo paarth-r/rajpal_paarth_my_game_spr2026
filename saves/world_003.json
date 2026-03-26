@@ -2,21 +2,21 @@
   "slots": [
     [
       "gold_coin",
-      15
+      27
     ],
     [
-      "health_potion",
+      "stone_chip",
       3
     ],
     [
       "arcane_sliver",
       4
     ],
+    null,
     [
-      "stone_hammer",
+      "wood_splinter",
       1
     ],
-    null,
     null,
     null,
     null,
@@ -44,21 +44,15 @@
     "boots": "legion_boots",
     "shield": null
   },
-  "selected_hotbar_index": 0,
-  "player_health": 250,
-  "current_level": "level1.txt",
+  "selected_hotbar_index": 1,
+  "player_health": 190,
+  "current_level": "level2.txt",
   "mob_states": {
-    "level1.txt": [
+    "level1.txt": [],
+    "level2.txt": [
       {
-        "tile_x": 21,
-        "tile_y": 20,
-        "health": 200,
-        "state": "inactive",
-        "mob_type": "statue"
-      },
-      {
-        "tile_x": 20,
-        "tile_y": 21,
+        "tile_x": 18,
+        "tile_y": 5,
         "health": 200,
         "state": "inactive",
         "mob_type": "statue"
@@ -67,8 +61,13 @@
   },
   "discovered_recipes": [],
   "player_class_id": "arcanist",
-  "player_level": 3,
-  "player_xp": 90,
-  "skill_points": 2,
-  "purchased_skill_nodes": []
+  "player_level": 5,
+  "player_xp": 20,
+  "skill_points": 0,
+  "purchased_skill_nodes": [
+    "arc_focus",
+    "arc_mind",
+    "arc_scholar",
+    "arc_ward"
+  ]
 }

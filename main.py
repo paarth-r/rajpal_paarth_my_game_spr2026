@@ -1172,10 +1172,16 @@ class Game:
         label = font.render(f"Level {self.player_level}", True, WHITE)
         self.screen.blit(label, (x, y))
         y += HUD_LINE_HEIGHT
-        self.screen.fill(HP_BAR_BG, (x, y, HUD_HEALTH_BAR_W, HUD_HEALTH_BAR_H))
+        ox = HUD_XP_BAR_OUTLINE_W
+        ix, iy = x + ox, y + ox
+        iw = HUD_HEALTH_BAR_W - 2 * ox
+        ih = HUD_HEALTH_BAR_H - 2 * ox
+        self.screen.fill(HUD_XP_BAR_TRACK, (ix, iy, iw, ih))
         if need_xp > 0:
-            fill_w = max(1, int(HUD_HEALTH_BAR_W * min(1.0, self.player_xp / need_xp)))
-            self.screen.fill((70, 110, 200), (x, y, fill_w, HUD_HEALTH_BAR_H))
+            fill_w = max(1, int(iw * min(1.0, self.player_xp / need_xp)))
+            self.screen.fill(HUD_XP_BAR_FILL, (ix, iy, fill_w, ih))
+        xp_outer = pg.Rect(x, y, HUD_HEALTH_BAR_W, HUD_HEALTH_BAR_H)
+        pg.draw.rect(self.screen, HUD_XP_BAR_OUTLINE, xp_outer, HUD_XP_BAR_OUTLINE_W)
         xp_txt = font.render(f"{self.player_xp} / {need_xp} XP", True, WHITE)
         self.screen.blit(xp_txt, (x + HUD_HEALTH_BAR_W + 8, y - 2))
         y += HUD_HEALTH_BAR_H + 12

@@ -2,6 +2,8 @@
 
 `Relictus` is a top-down dungeon crawler built with `pygame-ce`, featuring tile-based movement, animated combat, inventory/equipment, multi-level progression, checkpoint/death flow, save slots, and data-driven mobs/items.
 
+For a **long-form design plan** (lore bible, three-act story, hub/branches, level/mob roadmap, coin sinks, crafting hooks, and phased implementation), see [`docs/EXPANSION_DESIGN.md`](docs/EXPANSION_DESIGN.md).
+
 ## Tech Stack
 
 - Python 3 + `pygame-ce`
@@ -17,8 +19,6 @@
 - `inventory.py` - inventory slots, equipment logic, item stacking, damage/defense calculations
 - `settings.py` - global constants for gameplay, rendering, controls, UI dimensions
 - `data/items.json` - item definitions (stats, descriptions, effects, scaling, stack rules)
-- `data/classes.json` - player classes (starting gear, growth, skill trees)
-- `progression.py` - class helpers, XP curve, skill bonus math
 - `data/mobs.json` - mob archetypes and drop tables
 - `levels/*.txt` - level tilemaps and dungeon progression layout
 - `images/*` - character/mob/wall spritesheets
@@ -209,17 +209,95 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-  N1[New World: pick class] --> N2[Starting gear + base attributes]
+  N1[New World: pick class] --> N2[Apply starting_inventory + base_attrs from classes.json]
   N2 --> P[Play]
   P --> K[Defeat mob]
-  K --> X[+XP from mobs.json]
+  K --> X[+XP from data/mobs.json]
   X --> L{Enough XP to level?}
   L -->|yes| U[Level up: +1 skill point + class level_growth]
   U --> P
   L -->|no| P
-  P --> S[Skills tab: spend points on nodes]
+  P --> S[Skills tab: unlock nodes from classes.json]
   S --> P
 ```
+
+### Class arcs, lore, and item ties (Mermaid)
+
+Each column mirrors `data/classes.json` (stats, growth, skill order) and names real `item_id`s from `data/items.json`. Crafting uses `data/crafting.json` (e.g. **Assassin’s Grace**). Drops reference `data/mobs.json` (Stone Sentinel, Shadow Assassin).
+
+```mermaid
+flowchart TB
+  subgraph LEG["Legionnaire — relic of the forgotten empire’s line"]
+    direction TB
+    L_lore["Lore: drilled shield-wall fighter; the gladius is doctrine made steel"]
+    L_start["Origin loadout: gladius + legion_helm + legion_cuirass + legion_boots + gold_coin + health_potion"]
+    L_grow["Each level: +1 Strength, +1 Health attr — body hardens like old camp roads"]
+    L_s1["Skill: Brutality — heavy blade habit"]
+    L_s2["Skill: Discipline — camp endurance"]
+    L_s3["Skill: Veteran — requires Brutality; campaign scars"]
+    L_s4["Skill: Bulwark — requires Discipline; the wall holds"]
+    L_drop["Trophy weapon: stone_hammer from statue mobs in mobs.json — sentinel strength torn loose"]
+    L_end["Heirloom tier in items.json: pilum, lorica, galea, scutum — full legion panoply"]
+    L_lore --> L_start
+    L_start --> L_grow
+    L_grow --> L_s1
+    L_grow --> L_s2
+    L_s1 --> L_s3
+    L_s2 --> L_s4
+    L_s3 --> L_drop
+    L_s4 --> L_drop
+    L_drop --> L_end
+  end
+
+  subgraph ASS["Assassin — dagger cult and shadow war"]
+    direction TB
+    A_lore["Lore: pugio is the assassin’s kiss; speed over plate"]
+    A_start["Origin loadout: pugio + caligae + legion_helm + legion_cuirass + iron_scrap + potions + coin"]
+    A_grow["Each level: +1 Dexterity — feet learn the caligae’s hobnailed dance"]
+    A_s1["Skill: Blade Practice — edge time"]
+    A_s2["Skill: Shadow Step — slip the line of sight"]
+    A_s3["Skill: Lethal Focus — requires Blade Practice"]
+    A_s4["Skill: Survivor — requires Shadow Step"]
+    A_drop["Farm shadow_assassin (rogue.png): assassin_blade_shard + assassin_handle_wrap loot table"]
+    A_craft["Craft assassins_grace in crafting.json from shard + wrap — discover_on_items unlocks recipe"]
+    A_lore --> A_start
+    A_start --> A_grow
+    A_grow --> A_s1
+    A_grow --> A_s2
+    A_s1 --> A_s3
+    A_s2 --> A_s4
+    A_s3 --> A_drop
+    A_s4 --> A_drop
+    A_drop --> A_craft
+  end
+
+  subgraph ARC["Arcanist — scholar of residual focus"]
+    direction TB
+    R_lore["Lore: staff channels what the empire’s mages left in the stone"]
+    R_start["Origin loadout: arcane_staff + lorica + legion_helm + legion_boots + arcane_sliver stockpile + potions"]
+    R_grow["Each level: +1 Intelligence — read the dungeon’s dead symbols clearer"]
+    R_s1["Skill: Arcane Focus — tighten the channel"]
+    R_s2["Skill: Warding — body as brittle vessel, reinforced"]
+    R_s3["Skill: Scholar — requires Arcane Focus"]
+    R_s4["Skill: Mind Over Matter — requires Warding"]
+    R_loop["Item loop: salvaging staves yields arcane_sliver per items.json — slivers feed study and economy"]
+    R_staff["arcane_staff description: crackling ancient energy — matches sentinel-haunted depths theme"]
+    R_lore --> R_start
+    R_start --> R_grow
+    R_grow --> R_s1
+    R_grow --> R_s2
+    R_s1 --> R_s3
+    R_s2 --> R_s4
+    R_s3 --> R_loop
+    R_s4 --> R_loop
+    R_loop --> R_staff
+  end
+
+  L_end -.->|shared world| A_drop
+  L_end -.->|shared world| R_loop
+```
+
+**Reading the dashed links:** all three paths exist in the same dungeon economy (same mobs, merchants implied by gold_coin, shared materials like iron_scrap vs arcane_sliver). Solid arrows are *recommended* narrative progression inside each class; dotted lines are *cross-class* world ties, not hard gates.
 
 ## Levels, Doors, and Progression
 
@@ -275,7 +353,7 @@ Implemented in `main.py` with per-world JSON saves in `saves/`.
 - current level
 - per-level live mob snapshots (position, state, hp, type)
 - `player_class_id`, `player_level`, `player_xp`, `skill_points`, `purchased_skill_nodes`
-- `discovered_recipes`
+- `discovered_recipes` (unchanged)
 
 ### Title menu world controls
 

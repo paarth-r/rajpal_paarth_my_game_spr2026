@@ -84,6 +84,11 @@ HUD_HEALTH_BAR_W = 120
 HUD_HEALTH_BAR_H = 12
 HUD_ATTACK_BAR_W = 100
 HUD_ATTACK_BAR_H = 8
+# XP bar: black frame + dark track (health bar keeps red DARKRED track)
+HUD_XP_BAR_TRACK = BLACK
+HUD_XP_BAR_FILL = (70, 110, 200)
+HUD_XP_BAR_OUTLINE = BLACK
+HUD_XP_BAR_OUTLINE_W = 2
 
 # Inventory and item bar (hotbar)
 INVENTORY_SLOTS = 24
