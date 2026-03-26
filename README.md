@@ -204,13 +204,37 @@ Each item supports fields like:
 
 Includes starter legionnaire gear and multiple weapon archetypes.
 
+### Weapon stat/effect chart
+
+| Layer | Data field(s) | Runtime rule | Where applied |
+|---|---|---|---|
+| Base weapon damage | `base_damage` | Starting damage value for each hit | `inventory.py` (`get_weapon_damage`) |
+| Strength scaling | player `strength` | `base * (1 + strength / 20)` | `inventory.py` |
+| Weapon scaling stat | `scaling_stat`, `scaling_factor` | `+ (scaling_stat_value * scaling_factor)` | `inventory.py` |
+| Staff ranged penalty | `weapon_type == staff` | Multiply final damage by `RANGED_WEAPON_DAMAGE_MULT` | `inventory.py` |
+| Attack range | `attack_range_tiles` | Converted to px for auto-target; minimum 2 tiles enforced | `inventory.py` + `main.py` |
+| Attack speed | `attack_speed_bonus` | Adjusts base cooldown (negative is faster) | `inventory.py` |
+| Upgrade route | `augment_output`, `augment_coin_cost` | Weapon+rune+coins in Upgrade tab yields augmented weapon | `crafting.py` + `main.py` |
+| On-hit effect | `on_hit_effect` | `proc_bonus_damage` adds bonus damage on proc chance | `main.py` (`_roll_player_hit_damage`) |
+
 ## Crafting and recipe discovery
 
 Definitions live in `data/crafting.json` (loaded by `crafting.py`).
 
-- **Weapon types** define **slot layouts** (e.g. sword: hilt, blade, handle, magic; dagger: blade, handle, magic).
+- **Weapon types** now define **material slot layouts only** (no weapon slot, no magic slot in crafting).
 - Each **recipe** has a stable `id`, `display_name`, optional `starts_known`, `discover_on_items` (recipe appears when you pick up those materials), `weapon_type`, `inputs` (slot → item id or `null`), and `output` (`item_id`, `count`).
 - The **Craft** tab lists known recipes; drag items from the bag into the weapon-type slots, then craft.
+
+### Upgrade forge (separate menu)
+
+Use the **Upgrade** tab for augmentation:
+
+- stage one **weapon**
+- stage one **rune** (`ember_rune`, `frost_rune`, `storm_rune`)
+- pay the weapon's `augment_coin_cost` in `gold_coin`
+- receive the weapon's `augment_output` (augmented weapon)
+
+Runes are intentionally rare drops from mobs.
 
 ### Crafting flow (Mermaid)
 

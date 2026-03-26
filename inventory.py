@@ -45,18 +45,31 @@ class Inventory:
 
     def __init__(self, num_slots, hotbar_size=8):
         self.num_slots = num_slots
-        self.hotbar_size = min(hotbar_size, num_slots)
+        self.hotbar_size = max(1, int(hotbar_size))
         self.slots = [None] * num_slots
+        self.hotbar = [None] * self.hotbar_size
         self.selected_hotbar_index = 0
         self.equipment = {slot: None for slot in EQUIPMENT_SLOTS}
         # Crafting UI staging: slot_name -> item_id (one per slot; removed from bag while staged)
         self._craft_placements = {}
+        # Upgrade UI staging: weapon+rune before infusion.
+        self._upgrade_weapon_item_id = None
+        self._upgrade_rune_item_id = None
 
     def return_craft_staging(self):
         """Return staged crafting parts to inventory and clear the craft grid."""
         for _slot, item_id in list(self._craft_placements.items()):
             self.add_item(item_id, 1)
         self._craft_placements.clear()
+
+    def return_upgrade_staging(self):
+        """Return staged upgrade parts to inventory and clear upgrade slots."""
+        if self._upgrade_weapon_item_id:
+            self.add_item(self._upgrade_weapon_item_id, 1)
+            self._upgrade_weapon_item_id = None
+        if self._upgrade_rune_item_id:
+            self.add_item(self._upgrade_rune_item_id, 1)
+            self._upgrade_rune_item_id = None
 
     def apply_salvage_from_weapon(self, item_id):
         """Roll salvage drops for a weapon definition. Returns True if salvage was defined and rolled."""
@@ -104,9 +117,12 @@ class Inventory:
         return None
 
     def count_item(self, item_id):
-        """Total count of item_id across inventory slots (not equipment)."""
+        """Total count of item_id across bag + hotbar slots (not equipment)."""
         n = 0
         for s in self.slots:
+            if s is not None and s[0] == item_id:
+                n += s[1]
+        for s in self.hotbar:
             if s is not None and s[0] == item_id:
                 n += s[1]
         return n
@@ -158,7 +174,7 @@ class Inventory:
         return True
 
     def remove_item_by_id(self, item_id, amount):
-        """Remove up to amount of item_id from bag slots. Returns how many were removed."""
+        """Remove up to amount of item_id from bag+hotbar slots. Returns removed count."""
         if amount <= 0 or item_id not in ITEM_DEFS:
             return 0
         remaining = amount
@@ -175,12 +191,34 @@ class Inventory:
                 self.remove_item(i, take)
                 removed += take
                 remaining -= take
+        for i in range(self.hotbar_size):
+            if remaining <= 0:
+                break
+            s = self.hotbar[i]
+            if s is None or s[0] != item_id:
+                continue
+            _, c = s
+            take = min(remaining, c)
+            if take > 0:
+                if take >= c:
+                    self.hotbar[i] = None
+                else:
+                    self.hotbar[i] = (item_id, c - take)
+                removed += take
+                remaining -= take
         return removed
 
     def get_hotbar_slot(self, hotbar_index):
         if 0 <= hotbar_index < self.hotbar_size:
-            return self.get_slot(hotbar_index)
+            return self.hotbar[hotbar_index]
         return None
+
+    def set_hotbar_slot(self, hotbar_index, item_id, count):
+        if 0 <= hotbar_index < self.hotbar_size:
+            if count <= 0 or item_id is None:
+                self.hotbar[hotbar_index] = None
+            else:
+                self.hotbar[hotbar_index] = (item_id, int(count))
 
     def get_selected_item(self):
         return self.get_hotbar_slot(self.selected_hotbar_index)
@@ -193,6 +231,18 @@ class Inventory:
         item_id, count = s
         used = min(amount, count)
         self.remove_item(slot_index, used)
+        return item_id
+
+    def consume_from_hotbar(self, hotbar_index, amount=1):
+        s = self.get_hotbar_slot(hotbar_index)
+        if s is None or amount <= 0:
+            return None
+        item_id, count = s
+        used = min(amount, count)
+        if used >= count:
+            self.hotbar[hotbar_index] = None
+        else:
+            self.hotbar[hotbar_index] = (item_id, count - used)
         return item_id
 
     def equip_from_slot(self, slot_index):

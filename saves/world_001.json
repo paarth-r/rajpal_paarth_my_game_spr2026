@@ -2,9 +2,12 @@
   "slots": [
     [
       "gold_coin",
-      37
+      33
     ],
-    null,
+    [
+      "assassins_grace",
+      1
+    ],
     [
       "gladius",
       1
@@ -12,8 +15,14 @@
     null,
     null,
     null,
-    null,
-    null,
+    [
+      "stone_chip",
+      10
+    ],
+    [
+      "wood_splinter",
+      2
+    ],
     null,
     null,
     null,
@@ -32,19 +41,40 @@
     null
   ],
   "equipment": {
-    "weapon": "stone_hammer",
+    "weapon": "aug_assassins_grace",
     "head": "legion_helm",
     "chest": "legion_cuirass",
     "boots": "legion_boots",
     "shield": null
   },
-  "selected_hotbar_index": 1,
-  "player_health": 150,
-  "current_level": "level2.txt",
+  "selected_hotbar_index": 3,
+  "player_health": 255,
+  "current_level": "level4.txt",
   "mob_states": {
     "level1.txt": [],
     "level2.txt": [],
-    "level3.txt": []
+    "level3.txt": [],
+    "level4.txt": [
+      {
+        "tile_x": 26,
+        "tile_y": 2,
+        "health": 150,
+        "state": "inactive",
+        "mob_type": "shadow_assassin"
+      }
+    ]
   },
-  "discovered_recipes": []
+  "discovered_recipes": [
+    "assassins_grace"
+  ],
+  "player_class_id": "legionnaire",
+  "player_level": 5,
+  "player_xp": 70,
+  "skill_points": 0,
+  "purchased_skill_nodes": [
+    "leg_brutality",
+    "leg_bulwark",
+    "leg_discipline",
+    "leg_veteran"
+  ]
 }

@@ -264,8 +264,11 @@ class Player(Sprite):
     def hurt(self, damage):
         now = pg.time.get_ticks()
         if now - self.last_hurt >= PLAYER_HURT_COOLDOWN:
-            self.health = max(0, self.health - damage)
+            dmg = max(0, int(damage))
+            self.health = max(0, self.health - dmg)
             self.last_hurt = now
+            if dmg > 0 and hasattr(self.game, 'add_damage_number'):
+                self.game.add_damage_number(self.hit_rect.center, dmg, color=(255, 60, 60))
 
     def update(self):
         now = pg.time.get_ticks()
@@ -503,8 +506,11 @@ class Mob(Sprite):
     def hurt(self, damage):
         if self.state == 'dead':
             return
+        dmg = max(0, int(damage))
         old_hp = self.health
-        self.health = max(0, self.health - damage)
+        self.health = max(0, self.health - dmg)
+        if dmg > 0 and hasattr(self.game, 'add_damage_number'):
+            self.game.add_damage_number(self.hit_rect.center, dmg, color=(255, 60, 60))
         if self.health <= 0 and old_hp > 0:
             self.state = 'dead'
             self.anim_frame = 0

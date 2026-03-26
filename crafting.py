@@ -72,3 +72,48 @@ def try_finish_craft(inventory, recipe_id):
     # Clear placements (items were already removed from bag when staged)
     inventory._craft_placements.clear()
     return True
+
+
+def rune_item_ids():
+    return {
+        item_id for item_id, d in ITEM_DEFS.items()
+        if d.get('type') == 'rune'
+    }
+
+
+def can_infuse_weapon(inventory):
+    weapon_id = getattr(inventory, '_upgrade_weapon_item_id', None)
+    rune_id = getattr(inventory, '_upgrade_rune_item_id', None)
+    if not weapon_id or not rune_id:
+        return False, "Place a weapon and a rune."
+    w = ITEM_DEFS.get(weapon_id, {})
+    r = ITEM_DEFS.get(rune_id, {})
+    if w.get('type') != 'weapon':
+        return False, "Upgrade slot requires a weapon."
+    if r.get('type') != 'rune':
+        return False, "Rune slot requires a rune."
+    out_id = w.get('augment_output')
+    if out_id not in ITEM_DEFS:
+        return False, "This weapon has no augmented form."
+    coin_cost = int(w.get('augment_coin_cost', 25))
+    if inventory.count_item('gold_coin') < coin_cost:
+        return False, f"Need {coin_cost} gold coins."
+    return True, ""
+
+
+def try_finish_infusion(inventory):
+    ok, reason = can_infuse_weapon(inventory)
+    if not ok:
+        return False, reason
+    weapon_id = inventory._upgrade_weapon_item_id
+    w = ITEM_DEFS.get(weapon_id, {})
+    out_id = w.get('augment_output')
+    coin_cost = int(w.get('augment_coin_cost', 25))
+    if inventory.remove_item_by_id('gold_coin', coin_cost) < coin_cost:
+        return False, "Not enough gold coins."
+    if inventory.add_item(out_id, 1) > 0:
+        inventory.add_item('gold_coin', coin_cost)
+        return False, "Inventory full."
+    inventory._upgrade_weapon_item_id = None
+    inventory._upgrade_rune_item_id = None
+    return True, ""

@@ -26,10 +26,62 @@
         "anim_speed_ms": 120,
         "hit_frame": 3,
         "drops": [
-            {"item_id": "gold_coin", "count": [2, 5], "chance": 0.8},
-            {"item_id": "health_potion", "count": [1, 1], "chance": 0.3},
-            {"item_id": "stone_hammer", "count": [1, 1], "chance": 0.15},
-            {"item_id": "galea", "count": [1, 1], "chance": 0.05}
+            {
+                "item_id": "gold_coin",
+                "count": [
+                    2,
+                    5
+                ],
+                "chance": 0.8
+            },
+            {
+                "item_id": "health_potion",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.3
+            },
+            {
+                "item_id": "stone_hammer",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.15
+            },
+            {
+                "item_id": "galea",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.05
+            },
+            {
+                "item_id": "ember_rune",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.015
+            },
+            {
+                "item_id": "frost_rune",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.012
+            },
+            {
+                "item_id": "storm_rune",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.01
+            }
         ]
     },
     "shadow_assassin": {
@@ -63,10 +115,62 @@
         "heal_once_amount": 50,
         "heal_threshold_pct": 0.45,
         "drops": [
-            {"item_id": "gold_coin", "count": [2, 6], "chance": 0.9},
-            {"item_id": "health_potion", "count": [1, 2], "chance": 0.75},
-            {"item_id": "assassin_blade_shard", "count": [1, 1], "chance": 0.4},
-            {"item_id": "assassin_handle_wrap", "count": [1, 1], "chance": 0.4}
+            {
+                "item_id": "gold_coin",
+                "count": [
+                    2,
+                    6
+                ],
+                "chance": 0.9
+            },
+            {
+                "item_id": "health_potion",
+                "count": [
+                    1,
+                    2
+                ],
+                "chance": 0.75
+            },
+            {
+                "item_id": "assassin_blade_shard",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.4
+            },
+            {
+                "item_id": "assassin_handle_wrap",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.4
+            },
+            {
+                "item_id": "ember_rune",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.015
+            },
+            {
+                "item_id": "frost_rune",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.012
+            },
+            {
+                "item_id": "storm_rune",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.01
+            }
         ]
     }
 }

@@ -2,16 +2,47 @@
   "slots": [
     [
       "gold_coin",
-      6
+      74
+    ],
+    [
+      "assassin_handle_wrap",
+      1
     ],
     [
       "health_potion",
-      2
-    ],
-    [
-      "iron_scrap",
       3
     ],
+    [
+      "arcane_sliver",
+      4
+    ],
+    [
+      "assassins_grace",
+      1
+    ],
+    [
+      "assassins_grace",
+      1
+    ],
+    [
+      "stone_chip",
+      3
+    ],
+    [
+      "wood_splinter",
+      2
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
     null,
     null,
     null,
@@ -34,66 +65,48 @@
     null,
     null
   ],
+  "hotbar": [
+    [
+      "health_potion",
+      10
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
   "equipment": {
-    "weapon": "pugio",
+    "weapon": "arcane_staff",
     "head": "legion_helm",
-    "chest": "legion_cuirass",
-    "boots": "caligae",
+    "chest": "lorica",
+    "boots": "legion_boots",
     "shield": null
   },
   "selected_hotbar_index": 0,
-  "player_health": 100,
-  "current_level": "level1.txt",
+  "player_health": 285,
+  "current_level": "level4.txt",
   "mob_states": {
-    "level1.txt": [
-      {
-        "tile_x": 6,
-        "tile_y": 1,
-        "health": 200,
-        "state": "inactive",
-        "mob_type": "statue"
-      },
-      {
-        "tile_x": 2,
-        "tile_y": 3,
-        "health": 200,
-        "state": "inactive",
-        "mob_type": "statue"
-      },
-      {
-        "tile_x": 17,
-        "tile_y": 7,
-        "health": 200,
-        "state": "inactive",
-        "mob_type": "statue"
-      },
-      {
-        "tile_x": 26,
-        "tile_y": 7,
-        "health": 200,
-        "state": "inactive",
-        "mob_type": "statue"
-      },
-      {
-        "tile_x": 21,
-        "tile_y": 20,
-        "health": 200,
-        "state": "inactive",
-        "mob_type": "statue"
-      },
-      {
-        "tile_x": 20,
-        "tile_y": 21,
-        "health": 200,
-        "state": "inactive",
-        "mob_type": "statue"
-      }
-    ]
+    "level1.txt": [],
+    "level2.txt": [],
+    "level3.txt": [],
+    "level4.txt": [],
+    "level5.txt": []
   },
-  "discovered_recipes": [],
-  "player_class_id": "assassin",
-  "player_level": 1,
-  "player_xp": 0,
-  "skill_points": 0,
-  "purchased_skill_nodes": []
+  "discovered_recipes": [
+    "assassins_grace"
+  ],
+  "player_class_id": "arcanist",
+  "player_level": 8,
+  "player_xp": 165,
+  "skill_points": 2,
+  "purchased_skill_nodes": [
+    "arc_flux",
+    "arc_focus",
+    "arc_mind",
+    "arc_scholar",
+    "arc_ward"
+  ]
 }

@@ -5,10 +5,10 @@
             "name": "Legionnaire",
             "description": "Front-line fighter. High strength, heavy armor, reliable swordplay.",
             "base_attrs": {
-                "strength": 8,
-                "dexterity": 4,
+                "strength": 9,
+                "dexterity": 3,
                 "intelligence": 3,
-                "health": 14
+                "health": 16
             },
             "level_growth": {
                 "strength": 1,
@@ -32,34 +32,66 @@
                 {
                     "id": "leg_brutality",
                     "name": "Brutality",
-                    "description": "+2 Strength.",
+                    "description": "+3 Strength.",
                     "min_level": 1,
                     "requires": [],
-                    "stat_bonus": { "strength": 2 }
+                    "stat_bonus": { "strength": 3 }
                 },
                 {
                     "id": "leg_discipline",
                     "name": "Discipline",
-                    "description": "+3 Health attribute.",
+                    "description": "+4 Health attribute.",
                     "min_level": 1,
                     "requires": [],
-                    "stat_bonus": { "health": 3 }
+                    "stat_bonus": { "health": 4 }
                 },
                 {
                     "id": "leg_veteran",
                     "name": "Veteran",
-                    "description": "+2 Strength, +1 Health.",
+                    "description": "+2 Strength, +2 Health.",
                     "min_level": 3,
                     "requires": ["leg_brutality"],
-                    "stat_bonus": { "strength": 2, "health": 1 }
+                    "stat_bonus": { "strength": 2, "health": 2 }
                 },
                 {
                     "id": "leg_bulwark",
                     "name": "Bulwark",
-                    "description": "+4 Health attribute.",
+                    "description": "+3 Strength, +5 Health.",
                     "min_level": 5,
-                    "requires": ["leg_discipline"],
-                    "stat_bonus": { "health": 4 }
+                    "requires": ["leg_discipline", "leg_veteran"],
+                    "stat_bonus": { "strength": 3, "health": 5 }
+                },
+                {
+                    "id": "leg_warlord",
+                    "name": "Warlord's Tempo",
+                    "description": "+4 Strength.",
+                    "min_level": 8,
+                    "requires": ["leg_veteran"],
+                    "stat_bonus": { "strength": 4 }
+                },
+                {
+                    "id": "leg_ironwall",
+                    "name": "Iron Wall",
+                    "description": "+6 Health attribute.",
+                    "min_level": 9,
+                    "requires": ["leg_bulwark"],
+                    "stat_bonus": { "health": 6 }
+                },
+                {
+                    "id": "leg_unbroken",
+                    "name": "Unbroken Line",
+                    "description": "+5 Strength, +8 Health.",
+                    "min_level": 12,
+                    "requires": ["leg_warlord", "leg_ironwall"],
+                    "stat_bonus": { "strength": 5, "health": 8 }
+                },
+                {
+                    "id": "leg_primus",
+                    "name": "Primus",
+                    "description": "+6 Strength, +10 Health.",
+                    "min_level": 15,
+                    "requires": ["leg_unbroken"],
+                    "stat_bonus": { "strength": 6, "health": 10 }
                 }
             ]
         },
@@ -69,9 +101,9 @@
             "description": "Skirmisher. High dexterity, light gear, fast strikes.",
             "base_attrs": {
                 "strength": 4,
-                "dexterity": 9,
+                "dexterity": 10,
                 "intelligence": 3,
-                "health": 10
+                "health": 9
             },
             "level_growth": {
                 "strength": 0,
@@ -96,34 +128,66 @@
                 {
                     "id": "ass_blade",
                     "name": "Blade Practice",
-                    "description": "+2 Dexterity.",
+                    "description": "+3 Dexterity.",
                     "min_level": 1,
                     "requires": [],
-                    "stat_bonus": { "dexterity": 2 }
+                    "stat_bonus": { "dexterity": 3 }
                 },
                 {
                     "id": "ass_shadow",
                     "name": "Shadow Step",
-                    "description": "+1 Dexterity, +2 Health.",
+                    "description": "+2 Dexterity, +2 Health.",
                     "min_level": 2,
                     "requires": [],
-                    "stat_bonus": { "dexterity": 1, "health": 2 }
+                    "stat_bonus": { "dexterity": 2, "health": 2 }
                 },
                 {
                     "id": "ass_lethal",
                     "name": "Lethal Focus",
-                    "description": "+3 Dexterity.",
+                    "description": "+4 Dexterity.",
                     "min_level": 4,
                     "requires": ["ass_blade"],
-                    "stat_bonus": { "dexterity": 3 }
+                    "stat_bonus": { "dexterity": 4 }
                 },
                 {
                     "id": "ass_survivor",
                     "name": "Survivor",
-                    "description": "+5 Health attribute.",
+                    "description": "+3 Dexterity, +4 Health.",
                     "min_level": 6,
-                    "requires": ["ass_shadow"],
-                    "stat_bonus": { "health": 5 }
+                    "requires": ["ass_shadow", "ass_lethal"],
+                    "stat_bonus": { "dexterity": 3, "health": 4 }
+                },
+                {
+                    "id": "ass_dancer",
+                    "name": "Blade Dancer",
+                    "description": "+4 Dexterity.",
+                    "min_level": 8,
+                    "requires": ["ass_lethal"],
+                    "stat_bonus": { "dexterity": 4 }
+                },
+                {
+                    "id": "ass_veil",
+                    "name": "Veilrunner",
+                    "description": "+2 Dexterity, +6 Health.",
+                    "min_level": 10,
+                    "requires": ["ass_survivor"],
+                    "stat_bonus": { "dexterity": 2, "health": 6 }
+                },
+                {
+                    "id": "ass_execution",
+                    "name": "Execution Flow",
+                    "description": "+6 Dexterity, +4 Health.",
+                    "min_level": 13,
+                    "requires": ["ass_dancer", "ass_veil"],
+                    "stat_bonus": { "dexterity": 6, "health": 4 }
+                },
+                {
+                    "id": "ass_nightlord",
+                    "name": "Nightlord",
+                    "description": "+8 Dexterity, +6 Health.",
+                    "min_level": 16,
+                    "requires": ["ass_execution"],
+                    "stat_bonus": { "dexterity": 8, "health": 6 }
                 }
             ]
         },
@@ -133,9 +197,9 @@
             "description": "Scholar of old forces. High intelligence, staff focus, brittle but deadly.",
             "base_attrs": {
                 "strength": 3,
-                "dexterity": 4,
-                "intelligence": 9,
-                "health": 10
+                "dexterity": 3,
+                "intelligence": 11,
+                "health": 9
             },
             "level_growth": {
                 "strength": 0,
@@ -160,34 +224,66 @@
                 {
                     "id": "arc_focus",
                     "name": "Arcane Focus",
-                    "description": "+2 Intelligence.",
+                    "description": "+3 Intelligence.",
                     "min_level": 1,
                     "requires": [],
-                    "stat_bonus": { "intelligence": 2 }
+                    "stat_bonus": { "intelligence": 3 }
                 },
                 {
                     "id": "arc_ward",
                     "name": "Warding",
-                    "description": "+4 Health attribute.",
+                    "description": "+3 Health attribute.",
                     "min_level": 1,
                     "requires": [],
-                    "stat_bonus": { "health": 4 }
+                    "stat_bonus": { "health": 3 }
                 },
                 {
                     "id": "arc_scholar",
                     "name": "Scholar",
-                    "description": "+3 Intelligence, +1 Health.",
+                    "description": "+4 Intelligence, +1 Health.",
                     "min_level": 3,
                     "requires": ["arc_focus"],
-                    "stat_bonus": { "intelligence": 3, "health": 1 }
+                    "stat_bonus": { "intelligence": 4, "health": 1 }
                 },
                 {
                     "id": "arc_mind",
                     "name": "Mind Over Matter",
-                    "description": "+2 Intelligence, +3 Health.",
+                    "description": "+4 Intelligence, +4 Health.",
                     "min_level": 5,
-                    "requires": ["arc_ward"],
-                    "stat_bonus": { "intelligence": 2, "health": 3 }
+                    "requires": ["arc_ward", "arc_scholar"],
+                    "stat_bonus": { "intelligence": 4, "health": 4 }
+                },
+                {
+                    "id": "arc_flux",
+                    "name": "Mana Flux",
+                    "description": "+5 Intelligence.",
+                    "min_level": 8,
+                    "requires": ["arc_scholar"],
+                    "stat_bonus": { "intelligence": 5 }
+                },
+                {
+                    "id": "arc_aegis",
+                    "name": "Astral Aegis",
+                    "description": "+7 Health attribute.",
+                    "min_level": 10,
+                    "requires": ["arc_mind"],
+                    "stat_bonus": { "health": 7 }
+                },
+                {
+                    "id": "arc_archsage",
+                    "name": "Archsage",
+                    "description": "+7 Intelligence, +5 Health.",
+                    "min_level": 13,
+                    "requires": ["arc_flux", "arc_aegis"],
+                    "stat_bonus": { "intelligence": 7, "health": 5 }
+                },
+                {
+                    "id": "arc_paragon",
+                    "name": "Paragon of Relictus",
+                    "description": "+10 Intelligence, +8 Health.",
+                    "min_level": 16,
+                    "requires": ["arc_archsage"],
+                    "stat_bonus": { "intelligence": 10, "health": 8 }
                 }
             ]
         }
