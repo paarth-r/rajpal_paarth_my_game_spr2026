@@ -5,6 +5,13 @@ import json
 import random
 from os import path
 from settings import *
+from weapons import (
+    item_is_ranged_weapon,
+    weapon_cooldown_ms_for_item as _weapon_cooldown_from_item,
+    weapon_damage_from_attrs,
+    weapon_range_px,
+    weapon_range_tiles,
+)
 
 _DATA_DIR = path.join(path.dirname(__file__), 'data')
 
@@ -27,17 +34,8 @@ EQUIPMENT_SLOTS = ['weapon', 'head', 'chest', 'boots', 'shield']
 
 
 def weapon_cooldown_ms_for_item(item_id):
-    """Effective attack cooldown (ms) if this item is equipped as weapon (matches Inventory.get_weapon_cooldown_ms)."""
     item = ITEM_DEFS.get(item_id, {})
-    if item.get('type') != 'weapon':
-        return None
-    bonus = int(item.get('attack_speed_bonus', 0))
-    return max(80, int(PLAYER_ATTACK_COOLDOWN_MS + bonus))
-
-
-def item_is_ranged_weapon(item_def):
-    """All staff-class weapons are ranged/projectile weapons."""
-    return item_def.get('type') == 'weapon' and item_def.get('weapon_type') == 'staff'
+    return _weapon_cooldown_from_item(item)
 
 
 class Inventory:
@@ -307,15 +305,7 @@ class Inventory:
         if weapon_id is None:
             return 0
         weapon = ITEM_DEFS.get(weapon_id, {})
-        base = weapon.get('base_damage', PLAYER_ATTACK_DAMAGE)
-        strength = player_attrs.get('strength', 0)
-        scaling_stat = weapon.get('scaling_stat', 'strength')
-        scaling_factor = weapon.get('scaling_factor', 0.0)
-        scaling_val = player_attrs.get(scaling_stat, 0)
-        dmg = int(base * (1 + strength / 20) + scaling_val * scaling_factor)
-        if item_is_ranged_weapon(weapon):
-            dmg = max(1, int(round(dmg * RANGED_WEAPON_DAMAGE_MULT)))
-        return dmg
+        return weapon_damage_from_attrs(weapon, player_attrs)
 
     def get_weapon_cooldown_ms(self, base_cooldown_ms):
         """Return cooldown adjusted by equipped weapon attack_speed_bonus."""
@@ -329,8 +319,11 @@ class Inventory:
 
     def get_weapon_attack_range_px(self):
         """Radius in world pixels for auto-attack targeting (from weapon attack_range_tiles)."""
-        tiles = self.get_weapon_attack_range_tiles()
-        return max(1, int(round(tiles * TILESIZE)))
+        weapon_id = self.equipment.get('weapon')
+        if weapon_id is None:
+            return 0
+        weapon = ITEM_DEFS.get(weapon_id, {})
+        return weapon_range_px(weapon)
 
     def get_weapon_attack_range_tiles(self):
         """Attack range in tiles, clamped so all weapon attacks are at least 2 tiles."""
@@ -338,12 +331,7 @@ class Inventory:
         if weapon_id is None:
             return 0.0
         weapon = ITEM_DEFS.get(weapon_id, {})
-        tiles = weapon.get('attack_range_tiles', PLAYER_DEFAULT_ATTACK_RANGE_TILES)
-        try:
-            tiles = float(tiles)
-        except (TypeError, ValueError):
-            tiles = float(PLAYER_DEFAULT_ATTACK_RANGE_TILES)
-        return max(float(MIN_WEAPON_ATTACK_RANGE_TILES), tiles)
+        return weapon_range_tiles(weapon)
 
     def is_weapon_ranged(self):
         weapon_id = self.equipment.get('weapon')

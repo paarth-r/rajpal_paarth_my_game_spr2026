@@ -34,6 +34,9 @@ from progression import (
     get_class_def,
     xp_for_next_level,
 )
+from game.systems import progression_ops as progression_system
+from game.systems import save_ops as save_system
+from game.systems import world_ops as world_system
 
 vec = pg.math.Vector2
 
@@ -148,342 +151,7 @@ class Game:
         self.state = 'intro'
         self.run()
 
-    def init_save_system(self):
-        """Set up saves folder and choose active world save."""
-        os.makedirs(self.saves_dir, exist_ok=True)
-        legacy_save = path.join(self.game_dir, 'save_inventory.json')
-        legacy_target = path.join(self.saves_dir, 'world_001.json')
-        if path.exists(legacy_save) and not path.exists(legacy_target):
-            try:
-                with open(legacy_save, 'r') as src:
-                    payload = json.load(src)
-                with open(legacy_target, 'w') as dst:
-                    json.dump(payload, dst, indent=2)
-            except Exception:
-                pass
-        saves = sorted([f for f in os.listdir(self.saves_dir) if f.endswith('.json')])
-        active = None
-        if path.exists(self.active_save_path):
-            try:
-                with open(self.active_save_path, 'r') as f:
-                    name = f.read().strip()
-                if name in saves:
-                    active = name
-            except Exception:
-                active = None
-        if active is None:
-            if saves:
-                active = saves[0]
-            else:
-                active = 'world_001.json'
-        self.set_active_world(active)
-
-    def set_active_world(self, save_name):
-        self.current_save_name = save_name
-        self.save_path = path.join(self.saves_dir, save_name)
-        try:
-            with open(self.active_save_path, 'w') as f:
-                f.write(save_name)
-        except Exception:
-            pass
-
-    def get_skill_attr_bonuses(self):
-        return apply_skill_node_bonuses(self.player_class_id, self.purchased_skill_nodes)
-
-    def _recompute_player_base_attrs_from_progression(self):
-        self.player.base_attrs = compute_base_attrs_for_level(
-            self.player_class_id, self.player_level
-        )
-
-    def _apply_starting_gear_for_class(self):
-        c = get_class_def(self.player_class_id)
-        if not c:
-            return
-        si = c.get('starting_inventory', {})
-        for item_id, qty in si.get('items', {}).items():
-            if item_id in ITEM_DEFS:
-                self.inventory.add_item(item_id, int(qty))
-        for slot, item_id in si.get('equipment', {}).items():
-            if slot in EQUIPMENT_SLOTS and item_id in ITEM_DEFS:
-                self.inventory.equipment[slot] = item_id
-
-    def add_player_xp(self, amount):
-        if amount <= 0:
-            return
-        self.player_xp += amount
-        while self.player_level < 99:
-            need = xp_for_next_level(self.player_level)
-            if self.player_xp < need:
-                break
-            self.player_xp -= need
-            self.player_level += 1
-            self.skill_points += 1
-            self._recompute_player_base_attrs_from_progression()
-            self.player.recalc_stats()
-        self.save_inventory_state()
-
-    def try_purchase_skill_node(self, node_id):
-        purchased = self.purchased_skill_nodes
-        if not can_unlock_skill(
-            self.player_class_id, node_id, self.player_level, purchased, self.skill_points
-        ):
-            return False
-        self.skill_points -= 1
-        self.purchased_skill_nodes = set(purchased) | {node_id}
-        self.player.recalc_stats()
-        self.save_inventory_state()
-        return True
-
-    def on_mob_kill(self, mob):
-        if self.state != 'playing':
-            return
-        d = MOB_DEFS.get(getattr(mob, 'mob_type', 'statue'), {})
-        xp = int(d.get('xp', 25))
-        self.add_player_xp(xp)
-
-    def _apply_death_penalties(self):
-        """Lose a fraction of gold and XP toward next level; skip at zero coins or XP level floor."""
-        gold = self.inventory.count_item('gold_coin')
-        coins_lost = 0
-        if gold > 0:
-            coins_lost = max(1, int(gold * DEATH_GOLD_LOSS_PCT))
-            coins_lost = min(coins_lost, gold)
-            self.inventory.remove_item_by_id('gold_coin', coins_lost)
-
-        xp_lost = 0
-        at_xp_floor = self.player_level == 1 and self.player_xp == 0
-        if not at_xp_floor and self.player_xp > 0:
-            xp_lost = max(1, int(self.player_xp * DEATH_XP_LOSS_PCT))
-            xp_lost = min(xp_lost, self.player_xp)
-            self.player_xp -= xp_lost
-
-        self.death_screen_coins_lost = coins_lost
-        self.death_screen_xp_lost = xp_lost
-        self.save_inventory_state()
-
-    def _initialize_player_inventory(self):
-        """Load active world inventory or create default new-world inventory."""
-        self.inventory = Inventory(INVENTORY_SLOTS, HOTBAR_SLOTS)
-        self.discovered_recipe_ids = set()
-        loaded = self.load_inventory_state()
-        if loaded:
-            self._recompute_player_base_attrs_from_progression()
-            self.player.recalc_stats()
-            return
-        self._apply_starts_known_recipes()
-        self._sync_discovered_recipes_from_inventory()
-        self._apply_starting_gear_for_class()
-        self.save_inventory_state()
-
-    def _load_world_state_from_save(self):
-        """Load world-level state from save (current level + mobs)."""
-        if not path.exists(self.save_path):
-            return
-        try:
-            with open(self.save_path, 'r') as f:
-                payload = json.load(f)
-            level_name = payload.get('current_level')
-            if level_name in self.level_order:
-                self.current_level_name = level_name
-            mob_states = payload.get('mob_states', {})
-            if isinstance(mob_states, dict):
-                self.mob_states_by_level = mob_states
-        except Exception:
-            pass
-
-    def create_new_world(self, class_id=None):
-        """Create a new save world and start from fresh defaults; class_id sets role and starting gear."""
-        saves = [f for f in os.listdir(self.saves_dir) if f.endswith('.json')]
-        nums = []
-        for s in saves:
-            if s.startswith('world_') and s.endswith('.json'):
-                stem = s[len('world_'):-len('.json')]
-                if stem.isdigit():
-                    nums.append(int(stem))
-        next_num = (max(nums) + 1) if nums else 1
-        new_name = f"world_{next_num:03d}.json"
-        cid = class_id or DEFAULT_CLASS_ID
-        if get_class_def(cid) is None:
-            cid = DEFAULT_CLASS_ID
-        self.player_class_id = cid
-        self.player_level = 1
-        self.player_xp = 0
-        self.skill_points = 0
-        self.purchased_skill_nodes = set()
-        self.class_picker_for_new_world = False
-        self.set_active_world(new_name)
-        self.current_level_name = self.level_order[0]
-        self.mob_states_by_level = {}
-        self.load_level(self.current_level_name, create_player=True)
-        self._initialize_player_inventory()
-        self.pause_menu_open = False
-        self.inventory_open = False
-        self.inv_dragging = None
-        self.inv_selected = None
-        self.inventory_tab = 'character'
-        self.craft_selected_recipe_id = None
-        self.manual_target = None
-        self.state = 'playing'
-
-    def list_save_files(self):
-        """Return sorted list of world save filenames."""
-        return sorted([f for f in os.listdir(self.saves_dir) if f.endswith('.json')])
-
-    def delete_save(self, save_name):
-        """Remove a world JSON from disk; re-point active save if it was deleted."""
-        saves = self.list_save_files()
-        if save_name not in saves:
-            return
-        fp = path.join(self.saves_dir, save_name)
-        try:
-            os.remove(fp)
-        except OSError:
-            return
-        was_active = self.current_save_name == save_name
-        remaining = self.list_save_files()
-        if was_active:
-            if remaining:
-                self.set_active_world(remaining[0])
-            else:
-                self.set_active_world('world_001.json')
-
-    def select_world(self, save_name):
-        """Switch active world and load its state while staying in title menu."""
-        if save_name not in self.list_save_files():
-            return False
-        self.player_class_id = DEFAULT_CLASS_ID
-        self.player_level = 1
-        self.player_xp = 0
-        self.skill_points = 0
-        self.purchased_skill_nodes = set()
-        self.set_active_world(save_name)
-        self.current_level_name = self.level_order[0]
-        self.mob_states_by_level = {}
-        self._load_world_state_from_save()
-        self.load_level(self.current_level_name, create_player=True)
-        self._initialize_player_inventory()
-        self.pause_menu_open = False
-        self.inventory_open = False
-        self.inv_dragging = None
-        self.inv_selected = None
-        self.inventory_tab = 'character'
-        self.craft_selected_recipe_id = None
-        self.manual_target = None
-        self.save_picker_open = False
-        return True
-
-    def load_level(self, level_name, create_player=False):
-        """Build map/entities for a level; keep player instance when transitioning."""
-        self.current_level_name = level_name
-        level_path = path.join(self.levels_dir, level_name)
-        self.map = Map(level_path)
-        self.map_img = pg.Surface((self.map.width, self.map.height))
-        self.map_img.fill(FLOOR_COLOR)
-        self.map_rect = self.map_img.get_rect()
-        self.all_sprites = pg.sprite.Group()
-        self.all_walls = pg.sprite.Group()
-        self.all_mobs = pg.sprite.Group()
-        self.all_projectiles = pg.sprite.Group()
-        self.all_drops = pg.sprite.Group()
-        self.checkpoint_tile = None
-        self.level_exit_tiles = []
-        self.level_return_tiles = []
-        player_spawn = None
-        default_mob_spawns = []
-
-        for row, tiles in enumerate(self.map.data):
-            for col, tile in enumerate(tiles):
-                if tile == '1':
-                    Wall(self, col, row)
-                elif tile == 'P':
-                    player_spawn = (col, row)
-                    if self.checkpoint_tile is None:
-                        self.checkpoint_tile = (col, row)
-                elif tile == 'K':
-                    self.checkpoint_tile = (col, row)
-                elif tile == 'N':
-                    self.level_exit_tiles.append((col, row))
-                elif tile == 'R':
-                    self.level_return_tiles.append((col, row))
-                elif tile == 'M':
-                    default_mob_spawns.append((col, row))
-                elif tile == 'A':
-                    default_mob_spawns.append((col, row, 'shadow_assassin'))
-
-        if self.checkpoint_tile is None and player_spawn is not None:
-            self.checkpoint_tile = player_spawn
-        if player_spawn is None:
-            player_spawn = self.checkpoint_tile if self.checkpoint_tile else (1, 1)
-        reachable_tiles = self._compute_reachable_tiles_from(player_spawn[0], player_spawn[1])
-
-        if create_player or not hasattr(self, 'player') or self.player is None:
-            self.player = Player(self, player_spawn[0], player_spawn[1])
-        else:
-            self.all_sprites.add(self.player)
-            self.player.clear_move_queue()
-            self.player.move_state = 'idle'
-            self.player.slide_to_tile = None
-            self.player.tile_x, self.player.tile_y = self.checkpoint_tile if self.checkpoint_tile else player_spawn
-            self.player.pos = vec(self.player.tile_x * TILESIZE + TILESIZE / 2, self.player.tile_y * TILESIZE + TILESIZE / 2)
-            self.player.hit_rect.center = self.player.pos
-            self.player.rect.center = self.player.hit_rect.center
-
-        saved_mobs = self.mob_states_by_level.get(level_name)
-        if isinstance(saved_mobs, list):
-            for m in saved_mobs:
-                tx = int(m.get('tile_x', 0))
-                ty = int(m.get('tile_y', 0))
-                if (tx, ty) not in reachable_tiles:
-                    continue
-                mob_type = m.get('mob_type', 'statue')
-                health = int(m.get('health', MOB_HP))
-                if health <= 0:
-                    continue
-                mob = Mob(self, tx, ty, mob_type=mob_type)
-                mob.health = max(1, health)
-                if m.get('state') in ('inactive', 'idle', 'walk', 'attack'):
-                    mob.state = m.get('state')
-        else:
-            for spawn in default_mob_spawns:
-                if len(spawn) == 3:
-                    col, row, mob_type = spawn
-                else:
-                    col, row = spawn
-                    mob_type = 'statue'
-                if (col, row) not in reachable_tiles:
-                    continue
-                Mob(self, col, row, mob_type=mob_type)
-
-        self.level_exit_open = len([m for m in self.all_mobs if getattr(m, 'state', None) != 'dead']) == 0
-        self.camera = Camera(self.map.width, self.map.height)
-        self.manual_target = None
-
-    def _compute_reachable_tiles_from(self, start_col, start_row):
-        """Flood-fill passable map tiles (everything except walls) from the given start."""
-        h = len(self.map.data)
-        w = len(self.map.data[0]) if h > 0 else 0
-        if w == 0 or h == 0:
-            return set()
-        if not (0 <= start_col < w and 0 <= start_row < h):
-            return set()
-        if self.map.data[start_row][start_col] == '1':
-            return set()
-        q = deque()
-        q.append((start_col, start_row))
-        seen = {(start_col, start_row)}
-        while q:
-            c, r = q.popleft()
-            for dc, dr in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                nc, nr = c + dc, r + dr
-                if not (0 <= nc < w and 0 <= nr < h):
-                    continue
-                if (nc, nr) in seen:
-                    continue
-                if self.map.data[nr][nc] == '1':
-                    continue
-                seen.add((nc, nr))
-                q.append((nc, nr))
-        return seen
+    # save/world/progression methods were extracted to game.systems modules.
 
     def run(self):
         while self.running:
@@ -644,135 +312,7 @@ class Game:
     def quit(self):
         pass
 
-    def save_inventory_state(self):
-        """Persist inventory, player health, current level, and per-level mob states."""
-        try:
-            self.mob_states_by_level[self.current_level_name] = self._snapshot_current_level_mobs()
-            slots = []
-            for slot in self.inventory.slots:
-                if slot is None:
-                    slots.append(None)
-                else:
-                    slots.append([slot[0], slot[1]])
-            payload = {
-                'slots': slots,
-                'hotbar': [([s[0], s[1]] if s is not None else None) for s in self.inventory.hotbar],
-                'equipment': dict(self.inventory.equipment),
-                'selected_hotbar_index': int(self.inventory.selected_hotbar_index),
-                'player_health': int(self.player.health),
-                'current_level': self.current_level_name,
-                'mob_states': self.mob_states_by_level,
-                'discovered_recipes': sorted(self.discovered_recipe_ids),
-                'player_class_id': self.player_class_id,
-                'player_level': int(self.player_level),
-                'player_xp': int(self.player_xp),
-                'skill_points': int(self.skill_points),
-                'purchased_skill_nodes': sorted(self.purchased_skill_nodes),
-            }
-            with open(self.save_path, 'w') as f:
-                json.dump(payload, f, indent=2)
-            return True
-        except Exception:
-            return False
-
-    def _snapshot_current_level_mobs(self):
-        """Serialize current level's non-dead mobs."""
-        result = []
-        for mob in self.all_mobs:
-            if getattr(mob, 'state', None) == 'dead' or mob.health <= 0:
-                continue
-            result.append({
-                'tile_x': int(mob.tile_x),
-                'tile_y': int(mob.tile_y),
-                'health': int(mob.health),
-                'state': mob.state,
-                'mob_type': getattr(mob, 'mob_type', 'statue'),
-            })
-        return result
-
-    def load_inventory_state(self):
-        """Load inventory state from disk. Returns True if loaded successfully."""
-        if not path.exists(self.save_path):
-            return False
-        try:
-            with open(self.save_path, 'r') as f:
-                payload = json.load(f)
-            slots = payload.get('slots', [])
-            for i in range(min(len(slots), self.inventory.num_slots)):
-                s = slots[i]
-                if s is None:
-                    self.inventory.slots[i] = None
-                    continue
-                if not isinstance(s, list) or len(s) != 2:
-                    continue
-                item_id, count = s
-                if item_id in ITEM_DEFS and isinstance(count, int) and count > 0:
-                    self.inventory.slots[i] = (item_id, count)
-            hot = payload.get('hotbar')
-            if isinstance(hot, list):
-                for i in range(min(len(hot), self.inventory.hotbar_size)):
-                    s = hot[i]
-                    if isinstance(s, list) and len(s) == 2 and s[0] in ITEM_DEFS and isinstance(s[1], int) and s[1] > 0:
-                        self.inventory.hotbar[i] = (s[0], s[1])
-            else:
-                # Legacy migration: first hotbar slots used to be part of inventory bag.
-                for i in range(min(self.inventory.hotbar_size, self.inventory.num_slots)):
-                    s = self.inventory.slots[i]
-                    self.inventory.hotbar[i] = s
-                    self.inventory.slots[i] = None
-            eq = payload.get('equipment', {})
-            for slot_name in EQUIPMENT_SLOTS:
-                item_id = eq.get(slot_name)
-                if item_id in ITEM_DEFS:
-                    self.inventory.equipment[slot_name] = item_id
-                else:
-                    self.inventory.equipment[slot_name] = None
-            idx = int(payload.get('selected_hotbar_index', 0))
-            self.inventory.selected_hotbar_index = max(0, min(self.inventory.hotbar_size - 1, idx))
-            saved_hp = payload.get('player_health')
-            if isinstance(saved_hp, int):
-                max_hp = self.player.get_effective_max_health()
-                self.player.health = max(0, min(saved_hp, max_hp))
-            dr = payload.get('discovered_recipes')
-            if isinstance(dr, list):
-                self.discovered_recipe_ids.update(str(x) for x in dr)
-            self.player_class_id = payload.get('player_class_id', DEFAULT_CLASS_ID)
-            if get_class_def(self.player_class_id) is None:
-                self.player_class_id = DEFAULT_CLASS_ID
-            self.player_level = max(1, int(payload.get('player_level', 1)))
-            self.player_xp = max(0, int(payload.get('player_xp', 0)))
-            self.skill_points = max(0, int(payload.get('skill_points', 0)))
-            ps = payload.get('purchased_skill_nodes', [])
-            self.purchased_skill_nodes = set(ps) if isinstance(ps, list) else set()
-            self._apply_starts_known_recipes()
-            self._sync_discovered_recipes_from_inventory()
-            return True
-        except Exception:
-            return False
-
-    def _apply_starts_known_recipes(self):
-        self.discovered_recipe_ids |= default_starts_known_recipe_ids()
-
-    def _sync_discovered_recipes_from_inventory(self):
-        for i in range(self.inventory.num_slots):
-            s = self.inventory.get_slot(i)
-            if not s:
-                continue
-            item_id, _ = s
-            for rid in recipes_unlocked_by_item(item_id):
-                self.discovered_recipe_ids.add(rid)
-        for i in range(self.inventory.hotbar_size):
-            s = self.inventory.get_hotbar_slot(i)
-            if not s:
-                continue
-            item_id, _ = s
-            for rid in recipes_unlocked_by_item(item_id):
-                self.discovered_recipe_ids.add(rid)
-
-    def on_items_gained(self, item_id, count=1):
-        """Call when items enter the bag (e.g. pickup) to unlock crafting recipes."""
-        for rid in recipes_unlocked_by_item(item_id):
-            self.discovered_recipe_ids.add(rid)
+    # save/inventory sync methods extracted to game.systems.save_ops
 
     def add_damage_number(self, world_pos, amount, color=(255, 60, 60)):
         """Queue a floating damage number in world space."""
@@ -1066,48 +606,7 @@ class Game:
         self.death_screen_xp_lost = 0
         self.state = 'playing'
 
-    def go_to_next_level(self):
-        """Transition through unlocked exit to the next level file."""
-        try:
-            idx = self.level_order.index(self.current_level_name)
-        except ValueError:
-            idx = 0
-        if idx + 1 >= len(self.level_order):
-            return
-        self.mob_states_by_level[self.current_level_name] = self._snapshot_current_level_mobs()
-        next_level = self.level_order[idx + 1]
-        self.load_level(next_level, create_player=False)
-        # Ensure camera and gameplay continue cleanly on transition.
-        self.pause_menu_open = False
-        self.inventory.return_craft_staging()
-        self.inventory.return_upgrade_staging()
-        self.inventory_open = False
-        self.inv_dragging = None
-        self.inv_selected = None
-        self.manual_target = None
-        self.camera.update(self.player)
-        self.save_inventory_state()
-
-    def go_to_prev_level(self):
-        """Transition through return exit to previous level."""
-        try:
-            idx = self.level_order.index(self.current_level_name)
-        except ValueError:
-            idx = 0
-        if idx <= 0:
-            return
-        self.mob_states_by_level[self.current_level_name] = self._snapshot_current_level_mobs()
-        prev_level = self.level_order[idx - 1]
-        self.load_level(prev_level, create_player=False)
-        self.pause_menu_open = False
-        self.inventory.return_craft_staging()
-        self.inventory.return_upgrade_staging()
-        self.inventory_open = False
-        self.inv_dragging = None
-        self.inv_selected = None
-        self.manual_target = None
-        self.camera.update(self.player)
-        self.save_inventory_state()
+    # level transition methods extracted to game.systems.world_ops
 
     def draw_intro(self):
         """Menu-style title screen with interactive buttons."""
@@ -1219,20 +718,7 @@ class Game:
         )
         self.screen.blit(hint, (panel_x + 20, panel_y + panel_h - 28))
 
-    def _get_save_class_name(self, save_name):
-        """Display name of class saved in a world file (fallback: default class)."""
-        fp = path.join(self.saves_dir, save_name)
-        class_id = DEFAULT_CLASS_ID
-        try:
-            with open(fp, 'r') as f:
-                payload = json.load(f)
-            class_id = payload.get('player_class_id', DEFAULT_CLASS_ID)
-        except Exception:
-            class_id = DEFAULT_CLASS_ID
-        cdef = get_class_def(class_id)
-        if cdef:
-            return cdef.get('name', 'Unknown')
-        return get_class_def(DEFAULT_CLASS_ID).get('name', 'Legionnaire')
+    # save class lookup extracted to game.systems.save_ops
 
     def draw_class_picker_intro(self):
         """Overlay to pick class before create_new_world."""
@@ -2486,6 +1972,41 @@ class Game:
             if bonus > 0 and random.random() < chance:
                 dmg += bonus
         return max(1, int(dmg))
+
+
+# --- Refactored subsystem bindings (structure-only, no gameplay changes) ---
+Game.load_data = world_system.load_data
+Game.is_walkable = world_system.is_walkable
+Game.tile_blocks_line_of_sight = world_system.tile_blocks_line_of_sight
+Game.has_line_of_sight_tiles = world_system.has_line_of_sight_tiles
+Game.load_level = world_system.load_level
+Game._compute_reachable_tiles_from = world_system._compute_reachable_tiles_from
+Game.go_to_next_level = world_system.go_to_next_level
+Game.go_to_prev_level = world_system.go_to_prev_level
+
+Game.get_skill_attr_bonuses = progression_system.get_skill_attr_bonuses
+Game._recompute_player_base_attrs_from_progression = progression_system._recompute_player_base_attrs_from_progression
+Game._apply_starting_gear_for_class = progression_system._apply_starting_gear_for_class
+Game.add_player_xp = progression_system.add_player_xp
+Game.try_purchase_skill_node = progression_system.try_purchase_skill_node
+Game.on_mob_kill = progression_system.on_mob_kill
+Game._apply_death_penalties = progression_system._apply_death_penalties
+
+Game.init_save_system = save_system.init_save_system
+Game.set_active_world = save_system.set_active_world
+Game._load_world_state_from_save = save_system._load_world_state_from_save
+Game.create_new_world = save_system.create_new_world
+Game.list_save_files = save_system.list_save_files
+Game.delete_save = save_system.delete_save
+Game.select_world = save_system.select_world
+Game._snapshot_current_level_mobs = save_system._snapshot_current_level_mobs
+Game.save_inventory_state = save_system.save_inventory_state
+Game.load_inventory_state = save_system.load_inventory_state
+Game._apply_starts_known_recipes = save_system._apply_starts_known_recipes
+Game._sync_discovered_recipes_from_inventory = save_system._sync_discovered_recipes_from_inventory
+Game.on_items_gained = save_system.on_items_gained
+Game._initialize_player_inventory = save_system._initialize_player_inventory
+Game._get_save_class_name = save_system._get_save_class_name
 
 
 if __name__ == "__main__":
