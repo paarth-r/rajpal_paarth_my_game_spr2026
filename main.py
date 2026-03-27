@@ -8,7 +8,6 @@ import pygame as pg
 import sys
 import json
 import os
-import random
 from collections import deque
 from os import path
 from settings import *
@@ -20,11 +19,14 @@ from crafting import (
     can_infuse_weapon,
     default_starts_known_recipe_ids,
     get_recipe_list,
+    normalize_craft_placement,
     recipes_unlocked_by_item,
+    recipe_slot_quantity,
     try_finish_craft,
     try_finish_infusion,
 )
-from inventory import Inventory, ITEM_DEFS, EQUIPMENT_SLOTS, weapon_cooldown_ms_for_item
+from inventory import Inventory, ITEM_DEFS, EQUIPMENT_SLOTS, unpack_slot, weapon_cooldown_ms_for_item
+from weapons import format_on_hit_effect_tooltip, resolve_on_hit_effect
 from progression import (
     CLASS_DEFS,
     DEFAULT_CLASS_ID,
@@ -34,6 +36,9 @@ from progression import (
     get_class_def,
     xp_for_next_level,
 )
+from game.systems import progression_ops as progression_system
+from game.systems import save_ops as save_system
+from game.systems import world_ops as world_system
 
 vec = pg.math.Vector2
 
@@ -118,10 +123,10 @@ class Game:
         self.manual_target = None
         # Inventory UI state
         self.inv_slot_rects = []    # built each frame: list of (pg.Rect, source, index)
-        self.inv_dragging = None    # (source, index, item_id, count) while dragging
+        self.inv_dragging = None    # (source, index, item_id, count[, meta_dict]) while dragging
         self.inv_drag_offset = (0, 0)
         self.inv_selected = None    # (source, index) for click-highlight
-        self.inventory_tab = 'character'  # 'character' | 'stats' | 'skills' | 'craft' | 'upgrade'
+        self.inventory_tab = 'character'  # 'character' | 'skills' | 'craft' | 'upgrade'
         self.stats_dropdown_open = False
         self.craft_selected_recipe_id = None
         self.pause_menu_open = False
@@ -143,347 +148,13 @@ class Game:
         self.skill_node_rects = []
         self.skill_tree_page = 0
         self.damage_numbers = []
+        self.chain_lightning_fx = []
         self.death_screen_coins_lost = 0
         self.death_screen_xp_lost = 0
         self.state = 'intro'
         self.run()
 
-    def init_save_system(self):
-        """Set up saves folder and choose active world save."""
-        os.makedirs(self.saves_dir, exist_ok=True)
-        legacy_save = path.join(self.game_dir, 'save_inventory.json')
-        legacy_target = path.join(self.saves_dir, 'world_001.json')
-        if path.exists(legacy_save) and not path.exists(legacy_target):
-            try:
-                with open(legacy_save, 'r') as src:
-                    payload = json.load(src)
-                with open(legacy_target, 'w') as dst:
-                    json.dump(payload, dst, indent=2)
-            except Exception:
-                pass
-        saves = sorted([f for f in os.listdir(self.saves_dir) if f.endswith('.json')])
-        active = None
-        if path.exists(self.active_save_path):
-            try:
-                with open(self.active_save_path, 'r') as f:
-                    name = f.read().strip()
-                if name in saves:
-                    active = name
-            except Exception:
-                active = None
-        if active is None:
-            if saves:
-                active = saves[0]
-            else:
-                active = 'world_001.json'
-        self.set_active_world(active)
-
-    def set_active_world(self, save_name):
-        self.current_save_name = save_name
-        self.save_path = path.join(self.saves_dir, save_name)
-        try:
-            with open(self.active_save_path, 'w') as f:
-                f.write(save_name)
-        except Exception:
-            pass
-
-    def get_skill_attr_bonuses(self):
-        return apply_skill_node_bonuses(self.player_class_id, self.purchased_skill_nodes)
-
-    def _recompute_player_base_attrs_from_progression(self):
-        self.player.base_attrs = compute_base_attrs_for_level(
-            self.player_class_id, self.player_level
-        )
-
-    def _apply_starting_gear_for_class(self):
-        c = get_class_def(self.player_class_id)
-        if not c:
-            return
-        si = c.get('starting_inventory', {})
-        for item_id, qty in si.get('items', {}).items():
-            if item_id in ITEM_DEFS:
-                self.inventory.add_item(item_id, int(qty))
-        for slot, item_id in si.get('equipment', {}).items():
-            if slot in EQUIPMENT_SLOTS and item_id in ITEM_DEFS:
-                self.inventory.equipment[slot] = item_id
-
-    def add_player_xp(self, amount):
-        if amount <= 0:
-            return
-        self.player_xp += amount
-        while self.player_level < 99:
-            need = xp_for_next_level(self.player_level)
-            if self.player_xp < need:
-                break
-            self.player_xp -= need
-            self.player_level += 1
-            self.skill_points += 1
-            self._recompute_player_base_attrs_from_progression()
-            self.player.recalc_stats()
-        self.save_inventory_state()
-
-    def try_purchase_skill_node(self, node_id):
-        purchased = self.purchased_skill_nodes
-        if not can_unlock_skill(
-            self.player_class_id, node_id, self.player_level, purchased, self.skill_points
-        ):
-            return False
-        self.skill_points -= 1
-        self.purchased_skill_nodes = set(purchased) | {node_id}
-        self.player.recalc_stats()
-        self.save_inventory_state()
-        return True
-
-    def on_mob_kill(self, mob):
-        if self.state != 'playing':
-            return
-        d = MOB_DEFS.get(getattr(mob, 'mob_type', 'statue'), {})
-        xp = int(d.get('xp', 25))
-        self.add_player_xp(xp)
-
-    def _apply_death_penalties(self):
-        """Lose a fraction of gold and XP toward next level; skip at zero coins or XP level floor."""
-        gold = self.inventory.count_item('gold_coin')
-        coins_lost = 0
-        if gold > 0:
-            coins_lost = max(1, int(gold * DEATH_GOLD_LOSS_PCT))
-            coins_lost = min(coins_lost, gold)
-            self.inventory.remove_item_by_id('gold_coin', coins_lost)
-
-        xp_lost = 0
-        at_xp_floor = self.player_level == 1 and self.player_xp == 0
-        if not at_xp_floor and self.player_xp > 0:
-            xp_lost = max(1, int(self.player_xp * DEATH_XP_LOSS_PCT))
-            xp_lost = min(xp_lost, self.player_xp)
-            self.player_xp -= xp_lost
-
-        self.death_screen_coins_lost = coins_lost
-        self.death_screen_xp_lost = xp_lost
-        self.save_inventory_state()
-
-    def _initialize_player_inventory(self):
-        """Load active world inventory or create default new-world inventory."""
-        self.inventory = Inventory(INVENTORY_SLOTS, HOTBAR_SLOTS)
-        self.discovered_recipe_ids = set()
-        loaded = self.load_inventory_state()
-        if loaded:
-            self._recompute_player_base_attrs_from_progression()
-            self.player.recalc_stats()
-            return
-        self._apply_starts_known_recipes()
-        self._sync_discovered_recipes_from_inventory()
-        self._apply_starting_gear_for_class()
-        self.save_inventory_state()
-
-    def _load_world_state_from_save(self):
-        """Load world-level state from save (current level + mobs)."""
-        if not path.exists(self.save_path):
-            return
-        try:
-            with open(self.save_path, 'r') as f:
-                payload = json.load(f)
-            level_name = payload.get('current_level')
-            if level_name in self.level_order:
-                self.current_level_name = level_name
-            mob_states = payload.get('mob_states', {})
-            if isinstance(mob_states, dict):
-                self.mob_states_by_level = mob_states
-        except Exception:
-            pass
-
-    def create_new_world(self, class_id=None):
-        """Create a new save world and start from fresh defaults; class_id sets role and starting gear."""
-        saves = [f for f in os.listdir(self.saves_dir) if f.endswith('.json')]
-        nums = []
-        for s in saves:
-            if s.startswith('world_') and s.endswith('.json'):
-                stem = s[len('world_'):-len('.json')]
-                if stem.isdigit():
-                    nums.append(int(stem))
-        next_num = (max(nums) + 1) if nums else 1
-        new_name = f"world_{next_num:03d}.json"
-        cid = class_id or DEFAULT_CLASS_ID
-        if get_class_def(cid) is None:
-            cid = DEFAULT_CLASS_ID
-        self.player_class_id = cid
-        self.player_level = 1
-        self.player_xp = 0
-        self.skill_points = 0
-        self.purchased_skill_nodes = set()
-        self.class_picker_for_new_world = False
-        self.set_active_world(new_name)
-        self.current_level_name = self.level_order[0]
-        self.mob_states_by_level = {}
-        self.load_level(self.current_level_name, create_player=True)
-        self._initialize_player_inventory()
-        self.pause_menu_open = False
-        self.inventory_open = False
-        self.inv_dragging = None
-        self.inv_selected = None
-        self.inventory_tab = 'character'
-        self.craft_selected_recipe_id = None
-        self.manual_target = None
-        self.state = 'playing'
-
-    def list_save_files(self):
-        """Return sorted list of world save filenames."""
-        return sorted([f for f in os.listdir(self.saves_dir) if f.endswith('.json')])
-
-    def delete_save(self, save_name):
-        """Remove a world JSON from disk; re-point active save if it was deleted."""
-        saves = self.list_save_files()
-        if save_name not in saves:
-            return
-        fp = path.join(self.saves_dir, save_name)
-        try:
-            os.remove(fp)
-        except OSError:
-            return
-        was_active = self.current_save_name == save_name
-        remaining = self.list_save_files()
-        if was_active:
-            if remaining:
-                self.set_active_world(remaining[0])
-            else:
-                self.set_active_world('world_001.json')
-
-    def select_world(self, save_name):
-        """Switch active world and load its state while staying in title menu."""
-        if save_name not in self.list_save_files():
-            return False
-        self.player_class_id = DEFAULT_CLASS_ID
-        self.player_level = 1
-        self.player_xp = 0
-        self.skill_points = 0
-        self.purchased_skill_nodes = set()
-        self.set_active_world(save_name)
-        self.current_level_name = self.level_order[0]
-        self.mob_states_by_level = {}
-        self._load_world_state_from_save()
-        self.load_level(self.current_level_name, create_player=True)
-        self._initialize_player_inventory()
-        self.pause_menu_open = False
-        self.inventory_open = False
-        self.inv_dragging = None
-        self.inv_selected = None
-        self.inventory_tab = 'character'
-        self.craft_selected_recipe_id = None
-        self.manual_target = None
-        self.save_picker_open = False
-        return True
-
-    def load_level(self, level_name, create_player=False):
-        """Build map/entities for a level; keep player instance when transitioning."""
-        self.current_level_name = level_name
-        level_path = path.join(self.levels_dir, level_name)
-        self.map = Map(level_path)
-        self.map_img = pg.Surface((self.map.width, self.map.height))
-        self.map_img.fill(FLOOR_COLOR)
-        self.map_rect = self.map_img.get_rect()
-        self.all_sprites = pg.sprite.Group()
-        self.all_walls = pg.sprite.Group()
-        self.all_mobs = pg.sprite.Group()
-        self.all_projectiles = pg.sprite.Group()
-        self.all_drops = pg.sprite.Group()
-        self.checkpoint_tile = None
-        self.level_exit_tiles = []
-        self.level_return_tiles = []
-        player_spawn = None
-        default_mob_spawns = []
-
-        for row, tiles in enumerate(self.map.data):
-            for col, tile in enumerate(tiles):
-                if tile == '1':
-                    Wall(self, col, row)
-                elif tile == 'P':
-                    player_spawn = (col, row)
-                    if self.checkpoint_tile is None:
-                        self.checkpoint_tile = (col, row)
-                elif tile == 'K':
-                    self.checkpoint_tile = (col, row)
-                elif tile == 'N':
-                    self.level_exit_tiles.append((col, row))
-                elif tile == 'R':
-                    self.level_return_tiles.append((col, row))
-                elif tile == 'M':
-                    default_mob_spawns.append((col, row))
-                elif tile == 'A':
-                    default_mob_spawns.append((col, row, 'shadow_assassin'))
-
-        if self.checkpoint_tile is None and player_spawn is not None:
-            self.checkpoint_tile = player_spawn
-        if player_spawn is None:
-            player_spawn = self.checkpoint_tile if self.checkpoint_tile else (1, 1)
-        reachable_tiles = self._compute_reachable_tiles_from(player_spawn[0], player_spawn[1])
-
-        if create_player or not hasattr(self, 'player') or self.player is None:
-            self.player = Player(self, player_spawn[0], player_spawn[1])
-        else:
-            self.all_sprites.add(self.player)
-            self.player.clear_move_queue()
-            self.player.move_state = 'idle'
-            self.player.slide_to_tile = None
-            self.player.tile_x, self.player.tile_y = self.checkpoint_tile if self.checkpoint_tile else player_spawn
-            self.player.pos = vec(self.player.tile_x * TILESIZE + TILESIZE / 2, self.player.tile_y * TILESIZE + TILESIZE / 2)
-            self.player.hit_rect.center = self.player.pos
-            self.player.rect.center = self.player.hit_rect.center
-
-        saved_mobs = self.mob_states_by_level.get(level_name)
-        if isinstance(saved_mobs, list):
-            for m in saved_mobs:
-                tx = int(m.get('tile_x', 0))
-                ty = int(m.get('tile_y', 0))
-                if (tx, ty) not in reachable_tiles:
-                    continue
-                mob_type = m.get('mob_type', 'statue')
-                health = int(m.get('health', MOB_HP))
-                if health <= 0:
-                    continue
-                mob = Mob(self, tx, ty, mob_type=mob_type)
-                mob.health = max(1, health)
-                if m.get('state') in ('inactive', 'idle', 'walk', 'attack'):
-                    mob.state = m.get('state')
-        else:
-            for spawn in default_mob_spawns:
-                if len(spawn) == 3:
-                    col, row, mob_type = spawn
-                else:
-                    col, row = spawn
-                    mob_type = 'statue'
-                if (col, row) not in reachable_tiles:
-                    continue
-                Mob(self, col, row, mob_type=mob_type)
-
-        self.level_exit_open = len([m for m in self.all_mobs if getattr(m, 'state', None) != 'dead']) == 0
-        self.camera = Camera(self.map.width, self.map.height)
-        self.manual_target = None
-
-    def _compute_reachable_tiles_from(self, start_col, start_row):
-        """Flood-fill passable map tiles (everything except walls) from the given start."""
-        h = len(self.map.data)
-        w = len(self.map.data[0]) if h > 0 else 0
-        if w == 0 or h == 0:
-            return set()
-        if not (0 <= start_col < w and 0 <= start_row < h):
-            return set()
-        if self.map.data[start_row][start_col] == '1':
-            return set()
-        q = deque()
-        q.append((start_col, start_row))
-        seen = {(start_col, start_row)}
-        while q:
-            c, r = q.popleft()
-            for dc, dr in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                nc, nr = c + dc, r + dr
-                if not (0 <= nc < w and 0 <= nr < h):
-                    continue
-                if (nc, nr) in seen:
-                    continue
-                if self.map.data[nr][nc] == '1':
-                    continue
-                seen.add((nc, nr))
-                q.append((nc, nr))
-        return seen
+    # save/world/progression methods were extracted to game.systems modules.
 
     def run(self):
         while self.running:
@@ -563,13 +234,13 @@ class Game:
                 if event.key == pg.K_DELETE or event.key == pg.K_BACKSPACE:
                     self.player.clear_move_queue()
                 # Hold keys to queue moves (path preview); executes at speed
-                if event.key == pg.K_w:
+                if event.key in (pg.K_w, pg.K_UP):
                     self.player.queue_move(0, -1)
-                if event.key == pg.K_s:
+                if event.key in (pg.K_s, pg.K_DOWN):
                     self.player.queue_move(0, 1)
-                if event.key == pg.K_a:
+                if event.key in (pg.K_a, pg.K_LEFT):
                     self.player.queue_move(-1, 0)
-                if event.key == pg.K_d:
+                if event.key in (pg.K_d, pg.K_RIGHT):
                     self.player.queue_move(1, 0)
             if self.inventory_open and self.state == 'playing':
                 if event.type == pg.MOUSEBUTTONDOWN:
@@ -644,143 +315,15 @@ class Game:
     def quit(self):
         pass
 
-    def save_inventory_state(self):
-        """Persist inventory, player health, current level, and per-level mob states."""
-        try:
-            self.mob_states_by_level[self.current_level_name] = self._snapshot_current_level_mobs()
-            slots = []
-            for slot in self.inventory.slots:
-                if slot is None:
-                    slots.append(None)
-                else:
-                    slots.append([slot[0], slot[1]])
-            payload = {
-                'slots': slots,
-                'hotbar': [([s[0], s[1]] if s is not None else None) for s in self.inventory.hotbar],
-                'equipment': dict(self.inventory.equipment),
-                'selected_hotbar_index': int(self.inventory.selected_hotbar_index),
-                'player_health': int(self.player.health),
-                'current_level': self.current_level_name,
-                'mob_states': self.mob_states_by_level,
-                'discovered_recipes': sorted(self.discovered_recipe_ids),
-                'player_class_id': self.player_class_id,
-                'player_level': int(self.player_level),
-                'player_xp': int(self.player_xp),
-                'skill_points': int(self.skill_points),
-                'purchased_skill_nodes': sorted(self.purchased_skill_nodes),
-            }
-            with open(self.save_path, 'w') as f:
-                json.dump(payload, f, indent=2)
-            return True
-        except Exception:
-            return False
-
-    def _snapshot_current_level_mobs(self):
-        """Serialize current level's non-dead mobs."""
-        result = []
-        for mob in self.all_mobs:
-            if getattr(mob, 'state', None) == 'dead' or mob.health <= 0:
-                continue
-            result.append({
-                'tile_x': int(mob.tile_x),
-                'tile_y': int(mob.tile_y),
-                'health': int(mob.health),
-                'state': mob.state,
-                'mob_type': getattr(mob, 'mob_type', 'statue'),
-            })
-        return result
-
-    def load_inventory_state(self):
-        """Load inventory state from disk. Returns True if loaded successfully."""
-        if not path.exists(self.save_path):
-            return False
-        try:
-            with open(self.save_path, 'r') as f:
-                payload = json.load(f)
-            slots = payload.get('slots', [])
-            for i in range(min(len(slots), self.inventory.num_slots)):
-                s = slots[i]
-                if s is None:
-                    self.inventory.slots[i] = None
-                    continue
-                if not isinstance(s, list) or len(s) != 2:
-                    continue
-                item_id, count = s
-                if item_id in ITEM_DEFS and isinstance(count, int) and count > 0:
-                    self.inventory.slots[i] = (item_id, count)
-            hot = payload.get('hotbar')
-            if isinstance(hot, list):
-                for i in range(min(len(hot), self.inventory.hotbar_size)):
-                    s = hot[i]
-                    if isinstance(s, list) and len(s) == 2 and s[0] in ITEM_DEFS and isinstance(s[1], int) and s[1] > 0:
-                        self.inventory.hotbar[i] = (s[0], s[1])
-            else:
-                # Legacy migration: first hotbar slots used to be part of inventory bag.
-                for i in range(min(self.inventory.hotbar_size, self.inventory.num_slots)):
-                    s = self.inventory.slots[i]
-                    self.inventory.hotbar[i] = s
-                    self.inventory.slots[i] = None
-            eq = payload.get('equipment', {})
-            for slot_name in EQUIPMENT_SLOTS:
-                item_id = eq.get(slot_name)
-                if item_id in ITEM_DEFS:
-                    self.inventory.equipment[slot_name] = item_id
-                else:
-                    self.inventory.equipment[slot_name] = None
-            idx = int(payload.get('selected_hotbar_index', 0))
-            self.inventory.selected_hotbar_index = max(0, min(self.inventory.hotbar_size - 1, idx))
-            saved_hp = payload.get('player_health')
-            if isinstance(saved_hp, int):
-                max_hp = self.player.get_effective_max_health()
-                self.player.health = max(0, min(saved_hp, max_hp))
-            dr = payload.get('discovered_recipes')
-            if isinstance(dr, list):
-                self.discovered_recipe_ids.update(str(x) for x in dr)
-            self.player_class_id = payload.get('player_class_id', DEFAULT_CLASS_ID)
-            if get_class_def(self.player_class_id) is None:
-                self.player_class_id = DEFAULT_CLASS_ID
-            self.player_level = max(1, int(payload.get('player_level', 1)))
-            self.player_xp = max(0, int(payload.get('player_xp', 0)))
-            self.skill_points = max(0, int(payload.get('skill_points', 0)))
-            ps = payload.get('purchased_skill_nodes', [])
-            self.purchased_skill_nodes = set(ps) if isinstance(ps, list) else set()
-            self._apply_starts_known_recipes()
-            self._sync_discovered_recipes_from_inventory()
-            return True
-        except Exception:
-            return False
-
-    def _apply_starts_known_recipes(self):
-        self.discovered_recipe_ids |= default_starts_known_recipe_ids()
-
-    def _sync_discovered_recipes_from_inventory(self):
-        for i in range(self.inventory.num_slots):
-            s = self.inventory.get_slot(i)
-            if not s:
-                continue
-            item_id, _ = s
-            for rid in recipes_unlocked_by_item(item_id):
-                self.discovered_recipe_ids.add(rid)
-        for i in range(self.inventory.hotbar_size):
-            s = self.inventory.get_hotbar_slot(i)
-            if not s:
-                continue
-            item_id, _ = s
-            for rid in recipes_unlocked_by_item(item_id):
-                self.discovered_recipe_ids.add(rid)
-
-    def on_items_gained(self, item_id, count=1):
-        """Call when items enter the bag (e.g. pickup) to unlock crafting recipes."""
-        for rid in recipes_unlocked_by_item(item_id):
-            self.discovered_recipe_ids.add(rid)
+    # save/inventory sync methods extracted to game.systems.save_ops
 
     def add_damage_number(self, world_pos, amount, color=(255, 60, 60)):
-        """Queue a floating damage number in world space."""
+        """Queue a floating number in world space (red damage, green heal, orange burn DoT)."""
         amt = int(max(1, round(float(amount))))
         self.damage_numbers.append({
             'pos': vec(world_pos[0], world_pos[1] - TILESIZE * 0.45),
             'amount': amt,
-            'color': (255, 60, 60),
+            'color': color,
             'life_ms': 1000,
             'age_ms': 0,
         })
@@ -795,6 +338,13 @@ class Game:
             if dn['age_ms'] < dn['life_ms']:
                 live.append(dn)
         self.damage_numbers = live
+        if self.chain_lightning_fx:
+            live_fx = []
+            for fx in self.chain_lightning_fx:
+                fx['age_ms'] = fx.get('age_ms', 0) + dt_ms
+                if fx['age_ms'] < fx['life_ms']:
+                    live_fx.append(fx)
+            self.chain_lightning_fx = live_fx
         if self.player.health <= 0:
             self._apply_death_penalties()
             self.state = 'death'
@@ -819,7 +369,9 @@ class Game:
                     self._spawn_player_projectile(best)
                     self.player.attack_hit_dealt = True
             elif best is not None:
-                best.hurt(self._roll_player_hit_damage())
+                dmg = self._roll_player_hit_damage()
+                best.hurt(dmg)
+                self.apply_rune_on_hit_effects(best, dmg)
                 self.player.attack_hit_dealt = True
         player_tile = (self.player.tile_x, self.player.tile_y)
         if player_tile in self.level_return_tiles:
@@ -908,6 +460,12 @@ class Game:
                 if max_hp > 0:
                     fill_w = max(1, int(bar_w * sprite.health / max_hp))
                     self.screen.fill(HP_BAR_FG, (bar_x, bar_y, fill_w, bar_h))
+            if isinstance(sprite, Mob) and getattr(sprite, 'state', None) != 'dead':
+                tfx = pg.time.get_ticks()
+                if getattr(sprite, 'status_slow_until', 0) > tfx:
+                    draw_corner_brackets(self.screen, dest, (70, 150, 255), corner_len=9, thickness=2)
+                if getattr(sprite, 'status_burn_until', 0) > tfx:
+                    draw_corner_brackets(self.screen, dest, (255, 140, 40), corner_len=9, thickness=2)
         # Target selector: shows manual target, or current auto-target if no manual one.
         selected_target = self._get_best_attack_target()
         if selected_target is not None and selected_target.alive() and getattr(selected_target, 'state', None) != 'dead':
@@ -940,6 +498,18 @@ class Game:
                         screen_rect = self.camera.apply_rect(path_rect)
                         overlay.fill(MOB_ATTACK_OVERLAY, screen_rect)
         self.screen.blit(overlay, (0, 0))
+        if self.chain_lightning_fx:
+            cam = self.camera.camera
+            for fx in self.chain_lightning_fx:
+                ax = int((fx['a'].x - cam.x) * SCALE)
+                ay = int((fx['a'].y - cam.y) * SCALE)
+                bx = int((fx['b'].x - cam.x) * SCALE)
+                by = int((fx['b'].y - cam.y) * SCALE)
+                life = max(1, fx['life_ms'])
+                age_ratio = fx['age_ms'] / life
+                fade = max(0.15, 1.0 - age_ratio)
+                col = (int(180 + 75 * fade), int(180 + 75 * fade), int(60 + 40 * fade))
+                draw_lightning_bolt(self.screen, (ax, ay), (bx, by), col, width=2)
         if self.damage_numbers:
             dmg_font = pg.font.Font(pg.font.match_font('arial'), 22)
             for dn in self.damage_numbers:
@@ -952,12 +522,9 @@ class Game:
                 else:
                     alpha = max(0, int(255 * (1.0 - (age_ratio - 0.7) / 0.3)))
                 txt = dmg_font.render(str(dn['amount']), True, dn['color'])
-                sh = dmg_font.render(str(dn['amount']), True, (0, 0, 0))
                 txt.set_alpha(alpha)
-                sh.set_alpha(alpha)
                 tx = sx - txt.get_width() // 2
                 ty = sy - txt.get_height() // 2
-                self.screen.blit(sh, (tx + 1, ty + 1))
                 self.screen.blit(txt, (tx, ty))
         self.draw_hud()
         self.draw_hotbar()
@@ -1028,13 +595,13 @@ class Game:
         btn_w, btn_h = 320, 56
         x = WIDTH // 2 - btn_w // 2
         y0 = HEIGHT // 2 - 50
-        self.pause_save_btn_rect = pg.Rect(x, y0, btn_w, btn_h)
-        self.pause_quit_title_btn_rect = pg.Rect(x, y0 + 72, btn_w, btn_h)
-        self.pause_resume_btn_rect = pg.Rect(x, y0 + 144, btn_w, btn_h)
+        self.pause_resume_btn_rect = pg.Rect(x, y0, btn_w, btn_h)
+        self.pause_save_btn_rect = pg.Rect(x, y0 + 72, btn_w, btn_h)
+        self.pause_quit_title_btn_rect = pg.Rect(x, y0 + 144, btn_w, btn_h)
         for rect, text in (
+            (self.pause_resume_btn_rect, "Resume"),
             (self.pause_save_btn_rect, "Save Game"),
             (self.pause_quit_title_btn_rect, "Save & Quit to Title"),
-            (self.pause_resume_btn_rect, "Resume"),
         ):
             hover = rect.collidepoint(pg.mouse.get_pos())
             color = (80, 80, 80) if hover else (55, 55, 55)
@@ -1066,48 +633,7 @@ class Game:
         self.death_screen_xp_lost = 0
         self.state = 'playing'
 
-    def go_to_next_level(self):
-        """Transition through unlocked exit to the next level file."""
-        try:
-            idx = self.level_order.index(self.current_level_name)
-        except ValueError:
-            idx = 0
-        if idx + 1 >= len(self.level_order):
-            return
-        self.mob_states_by_level[self.current_level_name] = self._snapshot_current_level_mobs()
-        next_level = self.level_order[idx + 1]
-        self.load_level(next_level, create_player=False)
-        # Ensure camera and gameplay continue cleanly on transition.
-        self.pause_menu_open = False
-        self.inventory.return_craft_staging()
-        self.inventory.return_upgrade_staging()
-        self.inventory_open = False
-        self.inv_dragging = None
-        self.inv_selected = None
-        self.manual_target = None
-        self.camera.update(self.player)
-        self.save_inventory_state()
-
-    def go_to_prev_level(self):
-        """Transition through return exit to previous level."""
-        try:
-            idx = self.level_order.index(self.current_level_name)
-        except ValueError:
-            idx = 0
-        if idx <= 0:
-            return
-        self.mob_states_by_level[self.current_level_name] = self._snapshot_current_level_mobs()
-        prev_level = self.level_order[idx - 1]
-        self.load_level(prev_level, create_player=False)
-        self.pause_menu_open = False
-        self.inventory.return_craft_staging()
-        self.inventory.return_upgrade_staging()
-        self.inventory_open = False
-        self.inv_dragging = None
-        self.inv_selected = None
-        self.manual_target = None
-        self.camera.update(self.player)
-        self.save_inventory_state()
+    # level transition methods extracted to game.systems.world_ops
 
     def draw_intro(self):
         """Menu-style title screen with interactive buttons."""
@@ -1219,20 +745,7 @@ class Game:
         )
         self.screen.blit(hint, (panel_x + 20, panel_y + panel_h - 28))
 
-    def _get_save_class_name(self, save_name):
-        """Display name of class saved in a world file (fallback: default class)."""
-        fp = path.join(self.saves_dir, save_name)
-        class_id = DEFAULT_CLASS_ID
-        try:
-            with open(fp, 'r') as f:
-                payload = json.load(f)
-            class_id = payload.get('player_class_id', DEFAULT_CLASS_ID)
-        except Exception:
-            class_id = DEFAULT_CLASS_ID
-        cdef = get_class_def(class_id)
-        if cdef:
-            return cdef.get('name', 'Unknown')
-        return get_class_def(DEFAULT_CLASS_ID).get('name', 'Legionnaire')
+    # save class lookup extracted to game.systems.save_ops
 
     def draw_class_picker_intro(self):
         """Overlay to pick class before create_new_world."""
@@ -1337,6 +850,11 @@ class Game:
     def _slot_bg_for_item(self, item_id):
         if not item_id or item_id not in ITEM_DEFS:
             return SLOT_BG
+        # Keep these utility items visually fixed regardless of rarity.
+        if item_id == 'gold_coin':
+            return (245, 210, 70)  # always yellow
+        if item_id == 'health_potion':
+            return (185, 55, 55)   # always red
         r = ITEM_DEFS[item_id].get('rarity', 'common')
         return RARITY_SLOT_BG.get(r, SLOT_BG)
 
@@ -1375,7 +893,7 @@ class Game:
         pg.draw.rect(self.screen, bg, rect)
         pg.draw.rect(self.screen, border_color, rect, 2)
         if slot_data:
-            item_id, count = slot_data
+            item_id, count = slot_data[0], slot_data[1]
             pad = 5
             inner = SLOT_SIZE - 2 * pad
             if item_id in ITEM_DEFS:
@@ -1439,6 +957,12 @@ class Game:
             old_hp = self.player.health
             self.player.health = min(max_hp, self.player.health + healed)
             applied = self.player.health > old_hp
+            if applied:
+                self.add_damage_number(
+                    self.player.hit_rect.center,
+                    self.player.health - old_hp,
+                    color=(100, 240, 130),
+                )
         if not applied:
             return False
         consumed = self.inventory.consume_from_hotbar(idx, 1)
@@ -1457,38 +981,38 @@ class Game:
         mouse_pos = pg.mouse.get_pos()
         self.inv_slot_rects = []
         hovered_item_id = None
+        hovered_item_meta = {}
 
-        panel_w = 960
-        panel_h = 580
+        panel_w = 1120
+        panel_h = 660
         panel_x = (WIDTH - panel_w) // 2
         panel_y = (HEIGHT - panel_h) // 2
         pg.draw.rect(self.screen, (30, 30, 30), (panel_x, panel_y, panel_w, panel_h))
         pg.draw.rect(self.screen, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
 
         hint_shadow = font_sm.render(
-            "E / I / Esc close | Character / Stats / Skills / Craft / Upgrade | Drag bag/hotbar/equip | Shift+R-click salvage",
+            "E / I / Esc close | Hold Shift over item: salvage rolls | Shift+R-click: salvage weapon",
             True, (0, 0, 0))
         self.screen.blit(hint_shadow, (panel_x + 13, panel_y + panel_h - 21))
         close_hint = font_sm.render(
-            "E / I / Esc close | Character / Stats / Skills / Craft / Upgrade | Drag bag/hotbar/equip | Shift+R-click salvage",
+            "E / I / Esc close | Hold Shift over item: salvage rolls | Shift+R-click: salvage weapon",
             True, UI_TEXT_BRIGHT)
         self.screen.blit(close_hint, (panel_x + 12, panel_y + panel_h - 22))
 
-        tab_char = pg.Rect(panel_x + 16, panel_y + 10, 100, 28)
-        tab_stats = pg.Rect(panel_x + 120, panel_y + 10, 100, 28)
-        tab_skills = pg.Rect(panel_x + 224, panel_y + 10, 100, 28)
-        tab_craft = pg.Rect(panel_x + 328, panel_y + 10, 100, 28)
-        tab_upgrade = pg.Rect(panel_x + 432, panel_y + 10, 112, 28)
+        tab_char = pg.Rect(panel_x + 16, panel_y + 10, 126, 30)
+        tab_skills = pg.Rect(panel_x + 148, panel_y + 10, 126, 30)
+        tab_craft = pg.Rect(panel_x + 280, panel_y + 10, 126, 30)
+        tab_upgrade = pg.Rect(panel_x + 412, panel_y + 10, 134, 30)
 
-        content_top = panel_y + 46
+        content_top = panel_y + 54
         left_x = panel_x + 20
         recipe_col_x = panel_x + 14
-        recipe_col_w = 208
+        recipe_col_w = 260
         inv_cols = INVENTORY_COLS
         inv_rows = INVENTORY_ROWS
         total_inv_w = inv_cols * SLOT_SIZE + (inv_cols - 1) * SLOT_GAP
-        # Keep inventory/hotbar as one 8-slot wide block, shifted left from right edge.
-        inv_x = panel_x + panel_w - total_inv_w - 70
+        # Keep inventory/hotbar as one 8-slot wide block with extra breathing room.
+        inv_x = panel_x + panel_w - total_inv_w - 50
         inv_start_y = content_top + 36
 
         if self.inventory_tab == 'character':
@@ -1518,10 +1042,11 @@ class Game:
                 self.inv_slot_rects.append((r, 'equip', eq_slot))
                 if r.collidepoint(mouse_pos) and item_id and not is_drag_src:
                     hovered_item_id = item_id
+                    hovered_item_meta = dict(self.inventory.equipment_meta.get(eq_slot, {}))
                 label = font_sm.render(eq_label_map[eq_slot], True, UI_TEXT_MUTED)
                 self.screen.blit(label, (eq_x + SLOT_SIZE + 6, eq_y + SLOT_SIZE // 2 - label.get_height() // 2))
                 eq_y += SLOT_SIZE + 4
-            vit_x = eq_x + 170
+            vit_x = eq_x + 150
             vit_y = cy + 2
             vit_w = max(210, min(320, inv_x - vit_x - 16))
             vit_h = 186
@@ -1562,35 +1087,6 @@ class Game:
                     b = bonuses.get(stat, 0)
                     self.screen.blit(font_sm.render(f"{stat[:3].upper()}: {attrs.get(stat,0)}  (armor +{b})", True, UI_TEXT_MUTED), (dd.x + 8, sy2))
                     sy2 += 18
-        elif self.inventory_tab == 'stats':
-            sy = content_top
-            self.screen.blit(font.render("Stats", True, GOLD), (left_x, sy))
-            sy += 28
-            cd = get_class_def(self.player_class_id)
-            if cd:
-                self.screen.blit(font_sm.render(f"{cd['name']}  |  Level {self.player_level}", True, UI_TEXT_MUTED), (left_x, sy))
-                sy += 22
-            attrs = self.player.get_effective_attrs()
-            bonuses = self.inventory.get_equipment_stat_bonuses()
-            for stat in ['strength', 'dexterity', 'intelligence', 'health']:
-                b = bonuses.get(stat, 0)
-                self.screen.blit(font_sm.render(f"{stat.capitalize()}: {attrs.get(stat, 0)}   (armor +{b})", True, UI_TEXT_BRIGHT), (left_x, sy))
-                sy += 22
-            sy += 10
-            eff_max = self.player.get_effective_max_health()
-            self.screen.blit(font_sm.render(f"HP: {self.player.health}/{eff_max}", True, UI_TEXT_BRIGHT), (left_x, sy)); sy += 20
-            self.screen.blit(font_sm.render(f"Damage: {self.player.get_effective_damage()}", True, UI_TEXT_BRIGHT), (left_x, sy)); sy += 20
-            self.screen.blit(font_sm.render(f"Defense: {self.inventory.get_total_defense()}", True, UI_TEXT_BRIGHT), (left_x, sy)); sy += 24
-            wid = self.inventory.equipment.get('weapon')
-            w = ITEM_DEFS.get(wid, {}) if wid else {}
-            if w:
-                self.screen.blit(font_sm.render(f"Weapon: {w.get('name', wid)}", True, GOLD), (left_x, sy)); sy += 20
-                self.screen.blit(font_sm.render(f"Base {int(w.get('base_damage',0))} | Range {w.get('attack_range_tiles',2)}t | CD {weapon_cooldown_ms_for_item(wid)}ms", True, UI_TEXT_MUTED), (left_x, sy)); sy += 18
-                aout = w.get('augment_output')
-                if aout in ITEM_DEFS:
-                    aw = ITEM_DEFS[aout]
-                    self.screen.blit(font_sm.render(f"Augment: {aw.get('name', aout)}", True, GOLD), (left_x, sy)); sy += 18
-                    self.screen.blit(font_sm.render(f"Base {int(aw.get('base_damage',0))} | Range {aw.get('attack_range_tiles',2)}t | CD {weapon_cooldown_ms_for_item(aout)}ms", True, UI_TEXT_MUTED), (left_x, sy)); sy += 18
         elif self.inventory_tab == 'skills':
             sy = content_top
             cdef = get_class_def(self.player_class_id) or get_class_def(DEFAULT_CLASS_ID)
@@ -1723,9 +1219,16 @@ class Game:
             ):
                 self.craft_selected_recipe_id = known[0]['id']
 
-            mats_x = recipe_col_x + recipe_col_w + 18
+            mats_x = recipe_col_x + recipe_col_w + 20
+            recipe_panel = pg.Rect(recipe_col_x - 6, content_top - 8, recipe_col_w + 12, panel_h - (content_top - panel_y) - 58)
+            mats_panel_w = max(280, inv_x - mats_x - 20)
+            mats_panel = pg.Rect(mats_x - 8, content_top - 8, mats_panel_w + 16, panel_h - (content_top - panel_y) - 58)
+            pg.draw.rect(self.screen, (36, 38, 48), recipe_panel)
+            pg.draw.rect(self.screen, (92, 98, 120), recipe_panel, 2)
+            pg.draw.rect(self.screen, (36, 38, 48), mats_panel)
+            pg.draw.rect(self.screen, (92, 98, 120), mats_panel, 2)
 
-            self.screen.blit(font.render("Known recipes", True, GOLD), (recipe_col_x, content_top))
+            self.screen.blit(font.render("Known Recipes", True, GOLD), (recipe_col_x + 6, content_top))
             ry = content_top + 30
             if not known:
                 self.screen.blit(
@@ -1742,16 +1245,16 @@ class Game:
                 ry += 28
             for rec in known:
                 rid = rec['id']
-                rr = pg.Rect(recipe_col_x, ry, recipe_col_w, 30)
+                rr = pg.Rect(recipe_col_x + 6, ry, recipe_col_w - 12, 34)
                 sel = rid == self.craft_selected_recipe_id
                 pg.draw.rect(self.screen, (48, 72, 52) if sel else (42, 44, 52), rr)
                 pg.draw.rect(self.screen, GOLD if sel else (110, 115, 135), rr, 2)
                 name_s = font_sm.render(rec.get('display_name', rid), True, UI_TEXT_BRIGHT)
-                self.screen.blit(name_s, (rr.x + 8, rr.y + 7))
+                self.screen.blit(name_s, (rr.x + 8, rr.y + 9))
                 self.inv_slot_rects.append((rr, 'craft_recipe', rid))
-                ry += 34
+                ry += 38
 
-            self.screen.blit(font.render("Materials", True, GOLD), (mats_x, content_top))
+            self.screen.blit(font.render("Crafting Bench", True, GOLD), (mats_x, content_top))
             recipe_obj = RECIPES.get(self.craft_selected_recipe_id) if known else None
             my = content_top + 30
             if recipe_obj:
@@ -1781,45 +1284,55 @@ class Game:
                             (mats_x + 4, my))
                         my += 28
                         continue
+                    req_n = recipe_slot_quantity(recipe_obj, sk)
                     have = self.inventory.count_item(need)
+                    pr_id, pr_n = normalize_craft_placement(self.inventory._craft_placements.get(sk))
+                    if pr_id == need:
+                        have += pr_n
                     nm = ITEM_DEFS.get(need, {}).get('name', need)
                     self.screen.blit(font_sm.render(f"Item: {nm}", True, UI_TEXT_BRIGHT), (mats_x + 4, my))
                     my += 22
-                    req_n = 1
                     ok = have >= req_n
                     count_col = (130, 210, 140) if ok else (255, 130, 130)
                     count_line = f"Required: {req_n}          In inventory: {have}"
                     self.screen.blit(font_md.render(count_line, True, count_col), (mats_x + 4, my))
                     my += 24
-                    placed = self.inventory._craft_placements.get(sk)
-                    slot_data = (placed, 1) if placed else None
+                    placed_id, placed_n = normalize_craft_placement(self.inventory._craft_placements.get(sk))
+                    slot_data = (placed_id, placed_n) if placed_id else None
                     is_drag_src = self.inv_dragging and self.inv_dragging[0] == 'craft' and self.inv_dragging[1] == sk
                     r = self.draw_slot(mats_x + 4, my, slot_data, dimmed=is_drag_src)
                     self.inv_slot_rects.append((r, 'craft', sk))
-                    if r.collidepoint(mouse_pos) and placed and not is_drag_src:
-                        hovered_item_id = placed
+                    if r.collidepoint(mouse_pos) and placed_id and not is_drag_src:
+                        hovered_item_id = placed_id
                     self.screen.blit(
                         font_sm.render("Drag from inventory", True, UI_TEXT_MUTED),
                         (mats_x + 8 + SLOT_SIZE + SLOT_GAP, my + 12))
                     my += SLOT_SIZE + 20
 
-                cbtn = pg.Rect(mats_x, my + 4, 190, 38)
+                cbtn = pg.Rect(mats_x, my + 10, 220, 42)
                 pg.draw.rect(self.screen, (52, 92, 58), cbtn)
                 pg.draw.rect(self.screen, GOLD, cbtn, 2)
-                self.screen.blit(font_md.render("Craft", True, UI_TEXT_BRIGHT), (cbtn.x + 64, cbtn.y + 9))
+                self.screen.blit(font_md.render("Craft Item", True, UI_TEXT_BRIGHT), (cbtn.x + 58, cbtn.y + 11))
                 self.inv_slot_rects.append((cbtn, 'craft_btn', 0))
             elif not known:
                 self.screen.blit(
                     font_sm.render("Discover a recipe to see materials here.", True, UI_TEXT_DIM),
                     (mats_x, my))
         else:
-            up_x = recipe_col_x + recipe_col_w + 18
+            up_x = recipe_col_x + recipe_col_w + 20
+            up_panel_w = max(320, inv_x - up_x - 20)
+            guide_panel = pg.Rect(up_x - 8, content_top - 8, up_panel_w + 16, 86)
+            forge_panel = pg.Rect(up_x - 8, content_top + 88, up_panel_w + 16, 260)
+            pg.draw.rect(self.screen, (36, 38, 48), guide_panel)
+            pg.draw.rect(self.screen, (92, 98, 120), guide_panel, 2)
+            pg.draw.rect(self.screen, (36, 38, 48), forge_panel)
+            pg.draw.rect(self.screen, (92, 98, 120), forge_panel, 2)
             self.screen.blit(font.render("Upgrade Forge", True, GOLD), (up_x, content_top))
             uy = content_top + 34
             self.screen.blit(
                 font_sm.render("Infuse a weapon with a rune + coins to forge an augmented weapon.", True, UI_TEXT_MUTED),
                 (up_x, uy))
-            uy += 30
+            uy += 72
             self.screen.blit(font_md.render("Weapon", True, GOLD), (up_x, uy))
             uy += 24
             wid = self.inventory._upgrade_weapon_item_id
@@ -1849,42 +1362,46 @@ class Game:
             status_col = (120, 220, 130) if ok else (220, 130, 130)
             self.screen.blit(font_sm.render("Ready" if ok else reason, True, status_col), (up_x, uy))
             uy += 26
-            ubtn = pg.Rect(up_x, uy, 210, 38)
+            ubtn = pg.Rect(up_x, uy, 240, 42)
             pg.draw.rect(self.screen, (64, 82, 122), ubtn)
             pg.draw.rect(self.screen, GOLD, ubtn, 2)
-            self.screen.blit(font_md.render("Infuse Weapon", True, UI_TEXT_BRIGHT), (ubtn.x + 42, ubtn.y + 9))
+            self.screen.blit(font_md.render("Infuse Weapon", True, UI_TEXT_BRIGHT), (ubtn.x + 52, ubtn.y + 11))
             self.inv_slot_rects.append((ubtn, 'upgrade_btn', 0))
 
-        self.screen.blit(font.render("Inventory", True, GOLD), (inv_x, content_top))
-        hb_y = content_top + 34
-        for i in range(HOTBAR_SLOTS):
-            hx = inv_x + i * (SLOT_SIZE + SLOT_GAP)
-            hdata = self.inventory.get_hotbar_slot(i)
-            is_h_drag = self.inv_dragging and self.inv_dragging[0] == 'hotbar' and self.inv_dragging[1] == i
-            is_h_sel = i == self.inventory.selected_hotbar_index
-            hr = self.draw_slot(hx, hb_y, hdata, selected=is_h_sel, dimmed=is_h_drag)
-            self.inv_slot_rects.append((hr, 'hotbar', i))
-            if hr.collidepoint(mouse_pos) and hdata and not is_h_drag:
-                hovered_item_id = hdata[0]
-        self.screen.blit(font_sm.render("Hotbar", True, UI_TEXT_MUTED), (inv_x, hb_y + SLOT_SIZE + 6))
-        inv_start_y = hb_y + SLOT_SIZE + 24
-        for row in range(inv_rows):
-            for col in range(inv_cols):
-                idx = row * inv_cols + col
-                sx = inv_x + col * (SLOT_SIZE + SLOT_GAP)
-                sy = inv_start_y + row * (SLOT_SIZE + SLOT_GAP)
-                slot_data = self.inventory.get_slot(idx)
-                is_drag_src = self.inv_dragging and self.inv_dragging[0] == 'inv' and self.inv_dragging[1] == idx
-                is_selected = self.inv_selected == ('inv', idx)
-                r = self.draw_slot(sx, sy, slot_data, selected=False, highlight=is_selected, dimmed=is_drag_src)
-                self.inv_slot_rects.append((r, 'inv', idx))
-                if r.collidepoint(mouse_pos) and slot_data and not is_drag_src:
-                    hovered_item_id = slot_data[0]
+        if self.inventory_tab != 'skills':
+            self.screen.blit(font.render("Inventory", True, GOLD), (inv_x, content_top))
+            hb_y = content_top + 34
+            for i in range(HOTBAR_SLOTS):
+                hx = inv_x + i * (SLOT_SIZE + SLOT_GAP)
+                hdata = self.inventory.get_hotbar_slot(i)
+                is_h_drag = self.inv_dragging and self.inv_dragging[0] == 'hotbar' and self.inv_dragging[1] == i
+                is_h_sel = i == self.inventory.selected_hotbar_index
+                hr = self.draw_slot(hx, hb_y, hdata, selected=is_h_sel, dimmed=is_h_drag)
+                self.inv_slot_rects.append((hr, 'hotbar', i))
+                if hr.collidepoint(mouse_pos) and hdata and not is_h_drag:
+                    hovered_item_id = hdata[0]
+                    _hid, _hc, hmeta = unpack_slot(hdata)
+                    hovered_item_meta = dict(hmeta) if hmeta else {}
+            self.screen.blit(font_sm.render("Hotbar", True, UI_TEXT_MUTED), (inv_x, hb_y + SLOT_SIZE + 6))
+            inv_start_y = hb_y + SLOT_SIZE + 24
+            for row in range(inv_rows):
+                for col in range(inv_cols):
+                    idx = row * inv_cols + col
+                    sx = inv_x + col * (SLOT_SIZE + SLOT_GAP)
+                    sy = inv_start_y + row * (SLOT_SIZE + SLOT_GAP)
+                    slot_data = self.inventory.get_slot(idx)
+                    is_drag_src = self.inv_dragging and self.inv_dragging[0] == 'inv' and self.inv_dragging[1] == idx
+                    is_selected = self.inv_selected == ('inv', idx)
+                    r = self.draw_slot(sx, sy, slot_data, selected=False, highlight=is_selected, dimmed=is_drag_src)
+                    self.inv_slot_rects.append((r, 'inv', idx))
+                    if r.collidepoint(mouse_pos) and slot_data and not is_drag_src:
+                        hovered_item_id = slot_data[0]
+                        _iid, _ic, imeta = unpack_slot(slot_data)
+                        hovered_item_meta = dict(imeta) if imeta else {}
 
         tab_hit = []
         for rect, tid, lbl in (
             (tab_char, 'character', 'Character'),
-            (tab_stats, 'stats', 'Stats'),
             (tab_skills, 'skills', 'Skills'),
             (tab_craft, 'craft', 'Craft'),
             (tab_upgrade, 'upgrade', 'Upgrade'),
@@ -1898,7 +1415,7 @@ class Game:
 
         # --- Drag ghost ---
         if self.inv_dragging:
-            _, _, drag_item_id, drag_count = self.inv_dragging
+            _, _, drag_item_id, drag_count, _dm = self._inv_drag_parts()
             ghost_size = SLOT_SIZE - 8
             gx = mouse_pos[0] - ghost_size // 2
             gy = mouse_pos[1] - ghost_size // 2
@@ -1923,10 +1440,24 @@ class Game:
 
         # --- Tooltip ---
         if hovered_item_id and not self.inv_dragging:
-            self._draw_tooltip(mouse_pos, hovered_item_id, font_tip)
+            shift_on = pg.key.get_mods() & pg.KMOD_SHIFT
+            self._draw_tooltip(
+                mouse_pos, hovered_item_id, font_tip,
+                slot_meta=hovered_item_meta,
+                show_salvage=shift_on,
+            )
 
-    def _draw_tooltip(self, pos, item_id, font):
+    def _inv_drag_parts(self):
+        d = self.inv_dragging
+        if not d:
+            return None, None, None, None, {}
+        src, ref, iid, cnt = d[0], d[1], d[2], d[3]
+        meta = d[4] if len(d) > 4 and isinstance(d[4], dict) else {}
+        return src, ref, iid, cnt, meta
+
+    def _draw_tooltip(self, pos, item_id, font, slot_meta=None, show_salvage=False):
         """Render a multi-line tooltip box next to the cursor."""
+        slot_meta = slot_meta or {}
         if item_id == '__player_stats__':
             attrs = self.player.get_effective_attrs()
             bonuses = self.inventory.get_equipment_stat_bonuses()
@@ -1940,27 +1471,13 @@ class Game:
             item = ITEM_DEFS.get(item_id, {})
             lines = []
             lines.append(item.get('name', item_id))
-        itype = item.get('type', '')
-        if itype:
-            lines.append(f"Type: {itype.capitalize()}")
-        rar = item.get('rarity')
-        if rar:
-            lines.append(f"Rarity: {str(rar).capitalize()}")
-        wt = item.get('weapon_type')
-        if wt:
-            lines.append(f"Weapon layout: {wt.capitalize()}")
-        salv = item.get('salvage')
-        if salv:
-            lines.append("Salvage (Shift+right-click):")
-            for entry in salv:
-                nid = entry['item_id']
-                nm = ITEM_DEFS.get(nid, {}).get('name', nid)
-                lo, hi = entry['count']
-                ch = int(float(entry.get('chance', 1)) * 100)
-                lines.append(f"  {nm} x{lo}-{hi} ({ch}% per roll)")
-        desc = item.get('description', '')
-        if desc:
-            lines.append(desc)
+            rune_id = slot_meta.get('infused_rune')
+            if rune_id and rune_id in ITEM_DEFS:
+                rn = ITEM_DEFS[rune_id].get('name', rune_id)
+                lines.append(f"Infused rune: {rn}")
+                patron = ITEM_DEFS[rune_id].get('patron_god')
+                if patron:
+                    lines.append(f"Patron: {patron}")
         if item.get('type') == 'weapon':
             lines.append("Weapon Stats")
             base_dmg = int(item.get('base_damage', 0))
@@ -1971,15 +1488,20 @@ class Game:
                 lines.append(f"  Cooldown: {cd} ms")
             if item.get('scaling_stat'):
                 lines.append(f"  Scaling: {item['scaling_stat'].capitalize()} x{item.get('scaling_factor', 0)}")
-        aug_out = item.get('augment_output')
-        if aug_out:
-            aug_name = ITEM_DEFS.get(aug_out, {}).get('name', aug_out)
-            lines.append(f"Forge upgrade: {aug_name} ({int(item.get('augment_coin_cost', 25))} coins + rune)")
-        eff = item.get('on_hit_effect', {})
-        if eff.get('kind') == 'proc_bonus_damage':
-            ch = int(float(eff.get('chance', 0)) * 100)
-            bd = int(eff.get('bonus_damage', 0))
-            lines.append(f"On-hit effect: {ch}% chance for +{bd} bonus damage")
+            rb = item.get('rune_blessings', {})
+            if rb:
+                lines.append("Rune Blessings")
+                for rid, bless in rb.items():
+                    rname = ITEM_DEFS.get(rid, {}).get('name', rid)
+                    btxt = bless.get('summary', '')
+                    if btxt:
+                        lines.append(f"  {rname}: {btxt}")
+                    else:
+                        lines.append(f"  {rname}")
+        eff = resolve_on_hit_effect(item, slot_meta.get('infused_rune'))
+        tip_line = format_on_hit_effect_tooltip(eff)
+        if tip_line:
+            lines.append(tip_line)
         if item.get('defense'):
             lines.append(f"Defense: {item['defense']}")
         sb = item.get('stat_bonus', {})
@@ -1989,6 +1511,18 @@ class Game:
         if item.get('effect'):
             for ek, ev in item['effect'].items():
                 lines.append(f"Effect: {ek} {ev}")
+        desc = item.get('description', '')
+        if desc:
+            lines.append(desc)
+        salv = item.get('salvage')
+        if show_salvage and salv:
+            lines.append("Salvage (Shift+right-click):")
+            for entry in salv:
+                nid = entry['item_id']
+                nm = ITEM_DEFS.get(nid, {}).get('name', nid)
+                lo, hi = entry['count']
+                ch = int(float(entry.get('chance', 1)) * 100)
+                lines.append(f"  {nm} x{lo}-{hi} ({ch}% per roll)")
 
         name_font = pg.font.Font(pg.font.match_font('arial'), 16)
         pad = 10
@@ -2020,13 +1554,29 @@ class Game:
             self.screen.blit(fnt.render(l, True, col), (tx + pad, cy))
             cy += fnt.render(l, True, col).get_height() + 3
 
-    def _validate_craft_slot(self, item_id, craft_slot_key):
-        """True if item belongs in this recipe slot (recipe must match selected)."""
+    def _drop_onto_craft_slot(self, craft_slot_key, item_id):
+        """Stage items for the selected recipe; returns False if not enough materials."""
         recipe = RECIPES.get(self.craft_selected_recipe_id)
         if recipe is None:
             return False
-        need = recipe.get('inputs', {}).get(craft_slot_key)
-        return need is not None and item_id == need
+        need_id = recipe.get('inputs', {}).get(craft_slot_key)
+        if need_id is None or item_id != need_id:
+            return False
+        need_n = recipe_slot_quantity(recipe, craft_slot_key)
+        old_raw = self.inventory._craft_placements.get(craft_slot_key)
+        oid, on = normalize_craft_placement(old_raw)
+        pool = self.inventory.count_item(item_id)
+        if oid == item_id:
+            pool += on
+        if pool < need_n:
+            return False
+        if oid and on > 0:
+            self.inventory.add_item(oid, on)
+        removed = self.inventory.remove_item_by_id(item_id, need_n)
+        if removed < need_n:
+            return False
+        self.inventory._craft_placements[craft_slot_key] = (item_id, need_n)
+        return True
 
     def _inv_hit_test(self, pos):
         """Return (source, index) for the slot under pos, or None."""
@@ -2055,12 +1605,6 @@ class Game:
                     if self.inventory_tab == 'upgrade':
                         self.inventory.return_upgrade_staging()
                     self.inventory_tab = 'character'
-                elif index == 'stats':
-                    if self.inventory_tab == 'craft':
-                        self.inventory.return_craft_staging()
-                    if self.inventory_tab == 'upgrade':
-                        self.inventory.return_upgrade_staging()
-                    self.inventory_tab = 'stats'
                 elif index == 'skills':
                     if self.inventory_tab == 'craft':
                         self.inventory.return_craft_staging()
@@ -2096,6 +1640,7 @@ class Game:
                 return
             if source == 'craft_btn':
                 if try_finish_craft(self.inventory, self.craft_selected_recipe_id):
+                    self._sync_discovered_recipes_from_inventory()
                     self.save_inventory_state()
                 return
             if source == 'upgrade_btn':
@@ -2104,9 +1649,9 @@ class Game:
                     self.save_inventory_state()
                 return
             if source == 'craft':
-                item_id = self.inventory._craft_placements.get(index)
-                if item_id:
-                    self.inv_dragging = (source, index, item_id, 1)
+                pid, pn = normalize_craft_placement(self.inventory._craft_placements.get(index))
+                if pid and pn > 0:
+                    self.inv_dragging = (source, index, pid, pn, {})
                     self.inv_selected = hit
                 return
             if source == 'upgrade_weapon':
@@ -2124,19 +1669,22 @@ class Game:
             if source == 'inv':
                 slot_data = self.inventory.get_slot(index)
                 if slot_data:
-                    self.inv_dragging = (source, index, slot_data[0], slot_data[1])
+                    iid, ic, im = unpack_slot(slot_data)
+                    self.inv_dragging = (source, index, iid, ic, im)
                     self.inv_selected = hit
             elif source == 'hotbar':
                 slot_data = self.inventory.get_hotbar_slot(index)
                 if slot_data:
-                    self.inv_dragging = (source, index, slot_data[0], slot_data[1])
+                    iid, ic, im = unpack_slot(slot_data)
+                    self.inv_dragging = (source, index, iid, ic, im)
                     self.inv_selected = hit
                 else:
                     self.inv_selected = hit
             elif source == 'equip':
                 item_id = self.inventory.equipment.get(index)
                 if item_id:
-                    self.inv_dragging = (source, index, item_id, 1)
+                    em = dict(self.inventory.equipment_meta.get(index, {}))
+                    self.inv_dragging = (source, index, item_id, 1, em)
                     self.inv_selected = hit
                 else:
                     self.inv_selected = hit
@@ -2163,12 +1711,8 @@ class Game:
                     item_def = ITEM_DEFS.get(slot_data[0], {})
                     eq_slot = item_def.get('slot')
                     if eq_slot in EQUIPMENT_SLOTS:
-                        old = self.inventory.equipment.get(eq_slot)
-                        self.inventory.equipment[eq_slot] = slot_data[0]
-                        if old:
-                            self.inventory.set_hotbar_slot(index, old, 1)
-                        else:
-                            self.inventory.set_hotbar_slot(index, None, 0)
+                        self.inventory.equip_from_hotbar(index)
+                        self.save_inventory_state()
             elif source == 'equip':
                 self.inventory.unequip(index)
 
@@ -2176,7 +1720,7 @@ class Game:
         if event.button != 1 or not self.inv_dragging:
             self.inv_dragging = None
             return
-        drag_src, drag_idx, drag_item, drag_count = self.inv_dragging
+        drag_src, drag_idx, drag_item, drag_count, drag_meta = self._inv_drag_parts()
         drop_hit = self._inv_hit_test(event.pos)
 
         if drop_hit is None:
@@ -2189,33 +1733,54 @@ class Game:
 
         if self.inventory_tab == 'craft':
             if drag_src == 'inv' and drop_src == 'craft':
-                if not self._validate_craft_slot(drag_item, drop_idx):
-                    return
-                if not self.inventory.remove_item(drag_idx, 1):
-                    return
-                old = self.inventory._craft_placements.get(drop_idx)
-                if old:
-                    self.inventory.add_item(old, 1)
-                self.inventory._craft_placements[drop_idx] = drag_item
-                self.save_inventory_state()
-                self.inv_dragging = None
+                if self._drop_onto_craft_slot(drop_idx, drag_item):
+                    self.save_inventory_state()
+                    self.inv_dragging = None
+                return
+            if drag_src == 'hotbar' and drop_src == 'craft':
+                if self._drop_onto_craft_slot(drop_idx, drag_item):
+                    self.save_inventory_state()
+                    self.inv_dragging = None
                 return
             if drag_src == 'equip' and drop_src == 'craft' and drag_idx == 'weapon':
                 return
             if drag_src == 'craft' and drop_src == 'inv':
+                craft_sk = drag_idx
                 drop_data = self.inventory.get_slot(drop_idx)
                 if drop_data is None:
-                    self.inventory.set_slot(drop_idx, drag_item, 1)
-                    self.inventory._craft_placements.pop(drag_idx, None)
+                    self.inventory.set_slot(drop_idx, drag_item, drag_count, meta=drag_meta if drag_meta else None)
+                    self.inventory._craft_placements.pop(craft_sk, None)
                     self.save_inventory_state()
                     self.inv_dragging = None
                     return
-                di, dc = drop_data
+                di, dc = drop_data[0], drop_data[1]
                 idef = ITEM_DEFS.get(di, {})
                 mx = idef.get('max_stack', 99)
-                if di == drag_item and idef.get('stackable', True) and dc < mx:
-                    self.inventory.set_slot(drop_idx, di, dc + 1)
-                    self.inventory._craft_placements.pop(drag_idx, None)
+                if di == drag_item and idef.get('stackable', True) and dc + drag_count <= mx:
+                    self.inventory.set_slot(drop_idx, di, dc + drag_count)
+                    self.inventory._craft_placements.pop(craft_sk, None)
+                    self.save_inventory_state()
+                    self.inv_dragging = None
+                    return
+                return
+            if drag_src == 'craft' and drop_src == 'hotbar':
+                craft_sk = drag_idx
+                hb = self.inventory.get_hotbar_slot(drop_idx)
+                if hb is None:
+                    self.inventory.set_hotbar_slot(
+                        drop_idx, drag_item, drag_count,
+                        meta=drag_meta if drag_meta else None,
+                    )
+                    self.inventory._craft_placements.pop(craft_sk, None)
+                    self.save_inventory_state()
+                    self.inv_dragging = None
+                    return
+                hi, hc = hb[0], hb[1]
+                idef = ITEM_DEFS.get(hi, {})
+                mx = idef.get('max_stack', 99)
+                if hi == drag_item and idef.get('stackable', True) and hc + drag_count <= mx:
+                    self.inventory.set_hotbar_slot(drop_idx, hi, hc + drag_count)
+                    self.inventory._craft_placements.pop(craft_sk, None)
                     self.save_inventory_state()
                     self.inv_dragging = None
                     return
@@ -2307,9 +1872,11 @@ class Game:
                     space = max(0, mx - b[1])
                     if space > 0:
                         moved = min(space, a[1])
-                        self.inventory.set_slot(drop_idx, b[0], b[1] + moved)
-                        remain = a[1] - moved
-                        self.inventory.set_slot(drag_idx, a[0], remain) if remain > 0 else self.inventory.set_slot(drag_idx, None, 0)
+                        ai, ac, am = unpack_slot(a)
+                        bi, bc, bm = unpack_slot(b)
+                        self.inventory.set_slot(drop_idx, bi, bc + moved, meta=bm if bm else None)
+                        remain = ac - moved
+                        self.inventory.set_slot(drag_idx, ai, remain, meta=am if am else None) if remain > 0 else self.inventory.set_slot(drag_idx, None, 0)
                         self.save_inventory_state()
                         return
             self.inventory.slots[drag_idx] = b
@@ -2324,13 +1891,21 @@ class Game:
                     space = max(0, mx - b[1])
                     if space > 0:
                         moved = min(space, a[1])
-                        self.inventory.set_hotbar_slot(drop_idx, b[0], b[1] + moved)
-                        remain = a[1] - moved
-                        self.inventory.set_slot(drag_idx, a[0], remain) if remain > 0 else self.inventory.set_slot(drag_idx, None, 0)
+                        ai, ac, am = unpack_slot(a)
+                        bi, bc, bm = unpack_slot(b)
+                        self.inventory.set_hotbar_slot(
+                            drop_idx, bi, bc + moved, meta=bm if bm else None,
+                        )
+                        remain = ac - moved
+                        self.inventory.set_slot(drag_idx, ai, remain, meta=am if am else None) if remain > 0 else self.inventory.set_slot(drag_idx, None, 0)
                         self.save_inventory_state()
                         return
             self.inventory.slots[drag_idx] = b
-            self.inventory.set_hotbar_slot(drop_idx, a[0], a[1]) if a else self.inventory.set_hotbar_slot(drop_idx, None, 0)
+            if a:
+                ai, ac, am = unpack_slot(a)
+                self.inventory.set_hotbar_slot(drop_idx, ai, ac, meta=am if am else None)
+            else:
+                self.inventory.set_hotbar_slot(drop_idx, None, 0)
         elif drag_src == 'hotbar' and drop_src == 'inv':
             a = self.inventory.get_hotbar_slot(drag_idx)
             b = self.inventory.get_slot(drop_idx)
@@ -2341,12 +1916,23 @@ class Game:
                     space = max(0, mx - b[1])
                     if space > 0:
                         moved = min(space, a[1])
-                        self.inventory.set_slot(drop_idx, b[0], b[1] + moved)
-                        remain = a[1] - moved
-                        self.inventory.set_hotbar_slot(drag_idx, a[0], remain) if remain > 0 else self.inventory.set_hotbar_slot(drag_idx, None, 0)
+                        ai, ac, am = unpack_slot(a)
+                        bi, bc, bm = unpack_slot(b)
+                        self.inventory.set_slot(
+                            drop_idx, bi, bc + moved, meta=bm if bm else None,
+                        )
+                        remain = ac - moved
+                        if remain > 0:
+                            self.inventory.set_hotbar_slot(drag_idx, ai, remain, meta=am if am else None)
+                        else:
+                            self.inventory.set_hotbar_slot(drag_idx, None, 0)
                         self.save_inventory_state()
                         return
-            self.inventory.set_hotbar_slot(drag_idx, b[0], b[1]) if b else self.inventory.set_hotbar_slot(drag_idx, None, 0)
+            if b:
+                bi, bc, bm = unpack_slot(b)
+                self.inventory.set_hotbar_slot(drag_idx, bi, bc, meta=bm if bm else None)
+            else:
+                self.inventory.set_hotbar_slot(drag_idx, None, 0)
             self.inventory.slots[drop_idx] = a
         elif drag_src == 'hotbar' and drop_src == 'hotbar':
             a = self.inventory.get_hotbar_slot(drag_idx)
@@ -2358,55 +1944,93 @@ class Game:
                     space = max(0, mx - b[1])
                     if space > 0:
                         moved = min(space, a[1])
-                        self.inventory.set_hotbar_slot(drop_idx, b[0], b[1] + moved)
-                        remain = a[1] - moved
-                        self.inventory.set_hotbar_slot(drag_idx, a[0], remain) if remain > 0 else self.inventory.set_hotbar_slot(drag_idx, None, 0)
+                        ai, ac, am = unpack_slot(a)
+                        bi, bc, bm = unpack_slot(b)
+                        self.inventory.set_hotbar_slot(drop_idx, bi, bc + moved, meta=bm if bm else None)
+                        remain = ac - moved
+                        if remain > 0:
+                            self.inventory.set_hotbar_slot(drag_idx, ai, remain, meta=am if am else None)
+                        else:
+                            self.inventory.set_hotbar_slot(drag_idx, None, 0)
                         self.save_inventory_state()
                         return
-            self.inventory.set_hotbar_slot(drag_idx, b[0], b[1]) if b else self.inventory.set_hotbar_slot(drag_idx, None, 0)
-            self.inventory.set_hotbar_slot(drop_idx, a[0], a[1]) if a else self.inventory.set_hotbar_slot(drop_idx, None, 0)
+            if b:
+                bi, bc, bm = unpack_slot(b)
+                self.inventory.set_hotbar_slot(drag_idx, bi, bc, meta=bm if bm else None)
+            else:
+                self.inventory.set_hotbar_slot(drag_idx, None, 0)
+            if a:
+                ai, ac, am = unpack_slot(a)
+                self.inventory.set_hotbar_slot(drop_idx, ai, ac, meta=am if am else None)
+            else:
+                self.inventory.set_hotbar_slot(drop_idx, None, 0)
         elif drag_src == 'hotbar' and drop_src == 'equip':
             item_def = ITEM_DEFS.get(drag_item, {})
             if item_def.get('slot') == drop_idx:
                 old_eq = self.inventory.equipment.get(drop_idx)
+                old_meta = dict(self.inventory.equipment_meta.get(drop_idx, {}))
                 self.inventory.equipment[drop_idx] = drag_item
+                if drag_meta:
+                    self.inventory.equipment_meta[drop_idx] = dict(drag_meta)
+                else:
+                    self.inventory.equipment_meta.pop(drop_idx, None)
                 if old_eq:
-                    self.inventory.set_hotbar_slot(drag_idx, old_eq, 1)
+                    self.inventory.set_hotbar_slot(drag_idx, old_eq, 1, meta=old_meta if old_meta else None)
                 else:
                     self.inventory.set_hotbar_slot(drag_idx, None, 0)
         elif drag_src == 'inv' and drop_src == 'equip':
             item_def = ITEM_DEFS.get(drag_item, {})
             if item_def.get('slot') == drop_idx:
                 old_eq = self.inventory.equipment.get(drop_idx)
+                old_meta = dict(self.inventory.equipment_meta.get(drop_idx, {}))
                 self.inventory.equipment[drop_idx] = drag_item
+                if drag_meta:
+                    self.inventory.equipment_meta[drop_idx] = dict(drag_meta)
+                else:
+                    self.inventory.equipment_meta.pop(drop_idx, None)
                 if old_eq:
-                    self.inventory.set_slot(drag_idx, old_eq, 1)
+                    self.inventory.set_slot(drag_idx, old_eq, 1, meta=old_meta if old_meta else None)
                 else:
                     self.inventory.remove_item(drag_idx, drag_count)
         elif drag_src == 'equip' and drop_src == 'inv':
             drop_data = self.inventory.get_slot(drop_idx)
+            eq_meta = dict(self.inventory.equipment_meta.get(drag_idx, {}))
             if drop_data is None:
-                self.inventory.set_slot(drop_idx, drag_item, 1)
+                self.inventory.set_slot(drop_idx, drag_item, 1, meta=eq_meta if eq_meta else None)
                 self.inventory.equipment[drag_idx] = None
+                self.inventory.equipment_meta.pop(drag_idx, None)
             else:
                 drop_item_def = ITEM_DEFS.get(drop_data[0], {})
                 if drop_item_def.get('slot') == drag_idx:
-                    self.inventory.equipment[drag_idx] = drop_data[0]
-                    self.inventory.set_slot(drop_idx, drag_item, 1)
+                    di, dc, dm = unpack_slot(drop_data)
+                    self.inventory.equipment[drag_idx] = di
+                    if dm:
+                        self.inventory.equipment_meta[drag_idx] = dict(dm)
+                    else:
+                        self.inventory.equipment_meta.pop(drag_idx, None)
+                    self.inventory.set_slot(drop_idx, drag_item, 1, meta=eq_meta if eq_meta else None)
                 else:
-                    leftover = self.inventory.add_item(drag_item, 1)
+                    leftover = self.inventory.add_item(drag_item, 1, slot_meta=eq_meta if eq_meta else None)
                     if leftover == 0:
                         self.inventory.equipment[drag_idx] = None
+                        self.inventory.equipment_meta.pop(drag_idx, None)
         elif drag_src == 'equip' and drop_src == 'hotbar':
             drop_data = self.inventory.get_hotbar_slot(drop_idx)
+            eq_meta = dict(self.inventory.equipment_meta.get(drag_idx, {}))
             if drop_data is None:
-                self.inventory.set_hotbar_slot(drop_idx, drag_item, 1)
+                self.inventory.set_hotbar_slot(drop_idx, drag_item, 1, meta=eq_meta if eq_meta else None)
                 self.inventory.equipment[drag_idx] = None
+                self.inventory.equipment_meta.pop(drag_idx, None)
             else:
                 drop_item_def = ITEM_DEFS.get(drop_data[0], {})
                 if drop_item_def.get('slot') == drag_idx:
-                    self.inventory.equipment[drag_idx] = drop_data[0]
-                    self.inventory.set_hotbar_slot(drop_idx, drag_item, 1)
+                    di, dc, dm = unpack_slot(drop_data)
+                    self.inventory.equipment[drag_idx] = di
+                    if dm:
+                        self.inventory.equipment_meta[drag_idx] = dict(dm)
+                    else:
+                        self.inventory.equipment_meta.pop(drag_idx, None)
+                    self.inventory.set_hotbar_slot(drop_idx, drag_item, 1, meta=eq_meta if eq_meta else None)
         elif drag_src == 'equip' and drop_src == 'equip':
             if drag_idx == drop_idx:
                 return
@@ -2440,10 +2064,13 @@ class Game:
             self.manual_target = None
 
     def _get_best_attack_target(self):
-        """Return manual target if valid/in-range, else nearest in-range live mob."""
+        """Return manual target if valid/in-range, else nearest in-range live mob.
+        Range matches the active weapon's attack_range_tiles (equipped or selected hotbar weapon)."""
         px, py = self.player.hit_rect.centerx, self.player.hit_rect.centery
         best = None
         pr = self.player.get_effective_attack_range()
+        if pr <= 0:
+            return None
         best_d_sq = pr * pr
         if self.manual_target is not None:
             if self.manual_target.alive() and getattr(self.manual_target, 'state', None) != 'dead':
@@ -2475,17 +2102,97 @@ class Game:
         )
 
     def _roll_player_hit_damage(self):
-        """Base weapon damage with optional on-hit proc effects."""
+        """Base weapon damage (Vulcan burn is DoT on hit, not rolled here)."""
         dmg = self.player.get_effective_damage()
-        wid = self.inventory.equipment.get('weapon')
-        item = ITEM_DEFS.get(wid, {}) if wid else {}
-        eff = item.get('on_hit_effect', {})
-        if eff.get('kind') == 'proc_bonus_damage':
-            chance = float(eff.get('chance', 0.0))
-            bonus = int(eff.get('bonus_damage', 0))
-            if bonus > 0 and random.random() < chance:
-                dmg += bonus
         return max(1, int(dmg))
+
+    def apply_rune_on_hit_effects(self, primary_mob, damage_dealt):
+        """Vulcan burn, Neptune slow, Jupiter chain — always apply when a secondary target exists for chain."""
+        wid = self.inventory.get_effective_weapon_item_id()
+        if not wid or primary_mob is None:
+            return
+        item = ITEM_DEFS.get(wid, {})
+        rune_id = self.inventory.get_infused_rune_for_weapon_id(wid)
+        eff = resolve_on_hit_effect(item, rune_id)
+        kind = eff.get('kind')
+        if kind == 'burn_on_hit':
+            primary_mob.apply_rune_burn(
+                int(eff.get('duration_ms', 4000)),
+                int(eff.get('tick_interval_ms', 500)),
+                int(eff.get('damage_per_tick', 4)),
+            )
+        elif kind == 'slow_on_hit':
+            primary_mob.apply_rune_slow(
+                int(eff.get('duration_ms', 2500)),
+                float(eff.get('move_mult', 0.55)),
+            )
+        elif kind == 'chain_damage':
+            self._apply_jupiter_chain_damage(primary_mob, damage_dealt, eff)
+
+    def add_chain_lightning(self, world_a, world_b):
+        self.chain_lightning_fx.append({
+            'a': vec(world_a[0], world_a[1]),
+            'b': vec(world_b[0], world_b[1]),
+            'age_ms': 0,
+            'life_ms': 400,
+        })
+
+    def _apply_jupiter_chain_damage(self, primary_mob, damage_dealt, eff):
+        radius = float(eff.get('radius_tiles', 2.0))
+        frac = float(eff.get('damage_fraction', 0.35))
+        r_sq = radius * radius
+        px, py = primary_mob.tile_x, primary_mob.tile_y
+        best = None
+        best_d = None
+        for o in self.all_mobs:
+            if o is primary_mob or getattr(o, 'state', None) == 'dead':
+                continue
+            dx = float(o.tile_x - px)
+            dy = float(o.tile_y - py)
+            d_sq = dx * dx + dy * dy
+            if d_sq <= r_sq and d_sq > 0:
+                if best_d is None or d_sq < best_d:
+                    best_d = d_sq
+                    best = o
+        if best is not None:
+            splash = max(1, int(damage_dealt * frac))
+            self.add_chain_lightning(primary_mob.hit_rect.center, best.hit_rect.center)
+            best.hurt(splash)
+
+
+# --- Refactored subsystem bindings (structure-only, no gameplay changes) ---
+Game.load_data = world_system.load_data
+Game.is_walkable = world_system.is_walkable
+Game.tile_blocks_line_of_sight = world_system.tile_blocks_line_of_sight
+Game.has_line_of_sight_tiles = world_system.has_line_of_sight_tiles
+Game.load_level = world_system.load_level
+Game._compute_reachable_tiles_from = world_system._compute_reachable_tiles_from
+Game.go_to_next_level = world_system.go_to_next_level
+Game.go_to_prev_level = world_system.go_to_prev_level
+
+Game.get_skill_attr_bonuses = progression_system.get_skill_attr_bonuses
+Game._recompute_player_base_attrs_from_progression = progression_system._recompute_player_base_attrs_from_progression
+Game._apply_starting_gear_for_class = progression_system._apply_starting_gear_for_class
+Game.add_player_xp = progression_system.add_player_xp
+Game.try_purchase_skill_node = progression_system.try_purchase_skill_node
+Game.on_mob_kill = progression_system.on_mob_kill
+Game._apply_death_penalties = progression_system._apply_death_penalties
+
+Game.init_save_system = save_system.init_save_system
+Game.set_active_world = save_system.set_active_world
+Game._load_world_state_from_save = save_system._load_world_state_from_save
+Game.create_new_world = save_system.create_new_world
+Game.list_save_files = save_system.list_save_files
+Game.delete_save = save_system.delete_save
+Game.select_world = save_system.select_world
+Game._snapshot_current_level_mobs = save_system._snapshot_current_level_mobs
+Game.save_inventory_state = save_system.save_inventory_state
+Game.load_inventory_state = save_system.load_inventory_state
+Game._apply_starts_known_recipes = save_system._apply_starts_known_recipes
+Game._sync_discovered_recipes_from_inventory = save_system._sync_discovered_recipes_from_inventory
+Game.on_items_gained = save_system.on_items_gained
+Game._initialize_player_inventory = save_system._initialize_player_inventory
+Game._get_save_class_name = save_system._get_save_class_name
 
 
 if __name__ == "__main__":

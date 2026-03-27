@@ -5,6 +5,13 @@ import json
 import random
 from os import path
 from settings import *
+from weapons import (
+    item_is_ranged_weapon,
+    weapon_cooldown_ms_for_item as _weapon_cooldown_from_item,
+    weapon_damage_from_attrs,
+    weapon_range_px,
+    weapon_range_tiles,
+)
 
 _DATA_DIR = path.join(path.dirname(__file__), 'data')
 
@@ -26,22 +33,32 @@ ITEM_DEFS = load_item_defs()
 EQUIPMENT_SLOTS = ['weapon', 'head', 'chest', 'boots', 'shield']
 
 
-def weapon_cooldown_ms_for_item(item_id):
-    """Effective attack cooldown (ms) if this item is equipped as weapon (matches Inventory.get_weapon_cooldown_ms)."""
-    item = ITEM_DEFS.get(item_id, {})
-    if item.get('type') != 'weapon':
+def unpack_slot(s):
+    """Bag/hotbar slot: None, (id, n), or (id, n, meta_dict)."""
+    if s is None:
+        return None, 0, {}
+    item_id, count = s[0], int(s[1])
+    meta = {}
+    if len(s) > 2 and isinstance(s[2], dict):
+        meta = dict(s[2])
+    return item_id, count, meta
+
+
+def pack_slot(item_id, count, meta=None):
+    if not item_id or count <= 0:
         return None
-    bonus = int(item.get('attack_speed_bonus', 0))
-    return max(80, int(PLAYER_ATTACK_COOLDOWN_MS + bonus))
+    if meta:
+        return (item_id, int(count), meta)
+    return (item_id, int(count))
 
 
-def item_is_ranged_weapon(item_def):
-    """All staff-class weapons are ranged/projectile weapons."""
-    return item_def.get('type') == 'weapon' and item_def.get('weapon_type') == 'staff'
+def weapon_cooldown_ms_for_item(item_id):
+    item = ITEM_DEFS.get(item_id, {})
+    return _weapon_cooldown_from_item(item)
 
 
 class Inventory:
-    """Slot-based inventory with equipment. Each slot is (item_id, count) or None."""
+    """Slot-based inventory with equipment. Each slot is (item_id, count) or (item_id, count, meta)."""
 
     def __init__(self, num_slots, hotbar_size=8):
         self.num_slots = num_slots
@@ -50,6 +67,8 @@ class Inventory:
         self.hotbar = [None] * self.hotbar_size
         self.selected_hotbar_index = 0
         self.equipment = {slot: None for slot in EQUIPMENT_SLOTS}
+        # Per equipped slot: extra data e.g. {"infused_rune": "ember_rune"} for forged weapons.
+        self.equipment_meta = {}
         # Crafting UI staging: slot_name -> item_id (one per slot; removed from bag while staged)
         self._craft_placements = {}
         # Upgrade UI staging: weapon+rune before infusion.
@@ -58,8 +77,12 @@ class Inventory:
 
     def return_craft_staging(self):
         """Return staged crafting parts to inventory and clear the craft grid."""
-        for _slot, item_id in list(self._craft_placements.items()):
-            self.add_item(item_id, 1)
+        from crafting import normalize_craft_placement
+
+        for _slot, val in list(self._craft_placements.items()):
+            item_id, n = normalize_craft_placement(val)
+            if item_id and n > 0:
+                self.add_item(item_id, n)
         self._craft_placements.clear()
 
     def return_upgrade_staging(self):
@@ -95,7 +118,7 @@ class Inventory:
         s = self.get_slot(slot_index)
         if s is None:
             return False
-        item_id, _cnt = s
+        item_id, _cnt, _m = unpack_slot(s)
         if not self.apply_salvage_from_weapon(item_id):
             return False
         self.remove_item(slot_index, 1)
@@ -109,6 +132,7 @@ class Inventory:
         if not self.apply_salvage_from_weapon(w):
             return False
         self.equipment['weapon'] = None
+        self.equipment_meta.pop('weapon', None)
         return True
 
     def get_slot(self, index):
@@ -127,50 +151,53 @@ class Inventory:
                 n += s[1]
         return n
 
-    def set_slot(self, index, item_id, count):
+    def set_slot(self, index, item_id, count, meta=None):
         if index < 0 or index >= self.num_slots:
             return
-        if count <= 0:
+        if count <= 0 or item_id is None:
             self.slots[index] = None
         else:
-            self.slots[index] = (item_id, count)
+            self.slots[index] = pack_slot(item_id, count, meta)
 
-    def add_item(self, item_id, count=1):
-        """Add items; return leftover that didn't fit."""
+    def add_item(self, item_id, count=1, slot_meta=None):
+        """Add items; return leftover that didn't fit. slot_meta applies only when count==1 and a new slot is used."""
         if item_id not in ITEM_DEFS or count <= 0:
             return count
         item_def = ITEM_DEFS[item_id]
         max_stack = item_def.get('max_stack', 99)
         stackable = item_def.get('stackable', True)
+        attach_meta = slot_meta if (count == 1 and isinstance(slot_meta, dict) and slot_meta) else None
         for i in range(self.num_slots):
             if count <= 0:
                 break
             existing = self.slots[i]
             if existing is not None and existing[0] == item_id and stackable:
-                current = existing[1]
+                current = unpack_slot(existing)[1]
                 add = min(count, max_stack - current)
                 if add > 0:
-                    self.slots[i] = (item_id, current + add)
+                    self.slots[i] = pack_slot(item_id, current + add)
                     count -= add
         for i in range(self.num_slots):
             if count <= 0:
                 break
             if self.slots[i] is None:
                 add = min(count, max_stack)
-                self.slots[i] = (item_id, add)
+                use_meta = attach_meta if (add == count == 1) else None
+                self.slots[i] = pack_slot(item_id, add, use_meta)
                 count -= add
+                attach_meta = None
         return count
 
     def remove_item(self, slot_index, amount=1):
         s = self.get_slot(slot_index)
         if s is None or amount <= 0:
             return False
-        item_id, current = s
+        item_id, current, meta = unpack_slot(s)
         remove = min(amount, current)
         if remove >= current:
             self.set_slot(slot_index, None, 0)
         else:
-            self.set_slot(slot_index, item_id, current - remove)
+            self.set_slot(slot_index, item_id, current - remove, meta=meta if meta else None)
         return True
 
     def remove_item_by_id(self, item_id, amount):
@@ -197,13 +224,13 @@ class Inventory:
             s = self.hotbar[i]
             if s is None or s[0] != item_id:
                 continue
-            _, c = s
+            _iid, c, hmeta = unpack_slot(s)
             take = min(remaining, c)
             if take > 0:
                 if take >= c:
                     self.hotbar[i] = None
                 else:
-                    self.hotbar[i] = (item_id, c - take)
+                    self.hotbar[i] = pack_slot(item_id, c - take, hmeta if hmeta else None)
                 removed += take
                 remaining -= take
         return removed
@@ -213,12 +240,12 @@ class Inventory:
             return self.hotbar[hotbar_index]
         return None
 
-    def set_hotbar_slot(self, hotbar_index, item_id, count):
+    def set_hotbar_slot(self, hotbar_index, item_id, count, meta=None):
         if 0 <= hotbar_index < self.hotbar_size:
             if count <= 0 or item_id is None:
                 self.hotbar[hotbar_index] = None
             else:
-                self.hotbar[hotbar_index] = (item_id, int(count))
+                self.hotbar[hotbar_index] = pack_slot(item_id, int(count), meta)
 
     def get_selected_item(self):
         return self.get_hotbar_slot(self.selected_hotbar_index)
@@ -228,7 +255,7 @@ class Inventory:
         s = self.get_slot(slot_index)
         if s is None or amount <= 0:
             return None
-        item_id, count = s
+        item_id, count, _meta = unpack_slot(s)
         used = min(amount, count)
         self.remove_item(slot_index, used)
         return item_id
@@ -237,12 +264,12 @@ class Inventory:
         s = self.get_hotbar_slot(hotbar_index)
         if s is None or amount <= 0:
             return None
-        item_id, count = s
+        item_id, count, hmeta = unpack_slot(s)
         used = min(amount, count)
         if used >= count:
             self.hotbar[hotbar_index] = None
         else:
-            self.hotbar[hotbar_index] = (item_id, count - used)
+            self.hotbar[hotbar_index] = pack_slot(item_id, count - used, hmeta if hmeta else None)
         return item_id
 
     def equip_from_slot(self, slot_index):
@@ -250,19 +277,49 @@ class Inventory:
         s = self.get_slot(slot_index)
         if s is None:
             return False
-        item_id, count = s
+        item_id, count, meta = unpack_slot(s)
         item_def = ITEM_DEFS.get(item_id)
         if item_def is None:
             return False
         eq_slot = item_def.get('slot')
         if eq_slot is None or eq_slot not in EQUIPMENT_SLOTS:
             return False
-        old = self.equipment[eq_slot]
+        old_id = self.equipment[eq_slot]
+        old_meta = dict(self.equipment_meta.get(eq_slot, {}))
         self.equipment[eq_slot] = item_id
-        if old is not None:
-            self.set_slot(slot_index, old, 1)
+        if meta:
+            self.equipment_meta[eq_slot] = dict(meta)
+        else:
+            self.equipment_meta.pop(eq_slot, None)
+        if old_id is not None:
+            self.set_slot(slot_index, old_id, 1, meta=old_meta if old_meta else None)
         else:
             self.remove_item(slot_index, 1)
+        return True
+
+    def equip_from_hotbar(self, hotbar_index):
+        """Equip from hotbar (e.g. right-click equip). Swaps with currently equipped if slot occupied."""
+        s = self.get_hotbar_slot(hotbar_index)
+        if s is None:
+            return False
+        item_id, count, meta = unpack_slot(s)
+        item_def = ITEM_DEFS.get(item_id)
+        if item_def is None:
+            return False
+        eq_slot = item_def.get('slot')
+        if eq_slot is None or eq_slot not in EQUIPMENT_SLOTS:
+            return False
+        old_id = self.equipment[eq_slot]
+        old_meta = dict(self.equipment_meta.get(eq_slot, {}))
+        self.equipment[eq_slot] = item_id
+        if meta:
+            self.equipment_meta[eq_slot] = dict(meta)
+        else:
+            self.equipment_meta.pop(eq_slot, None)
+        if old_id is not None:
+            self.set_hotbar_slot(hotbar_index, old_id, 1, meta=old_meta if old_meta else None)
+        else:
+            self.hotbar[hotbar_index] = None
         return True
 
     def unequip(self, eq_slot):
@@ -272,9 +329,12 @@ class Inventory:
         item_id = self.equipment.get(eq_slot)
         if item_id is None:
             return False
-        leftover = self.add_item(item_id, 1)
+        em = self.equipment_meta.get(eq_slot, {})
+        slot_meta = dict(em) if em else None
+        leftover = self.add_item(item_id, 1, slot_meta=slot_meta)
         if leftover == 0:
             self.equipment[eq_slot] = None
+            self.equipment_meta.pop(eq_slot, None)
             return True
         return False
 
@@ -300,26 +360,61 @@ class Inventory:
                 bonuses[stat] = bonuses.get(stat, 0) + val
         return bonuses
 
+    def get_effective_weapon_item_id(self):
+        """Weapon used for attacks: equipped weapon, else selected hotbar slot if it holds a weapon."""
+        eq = self.equipment.get('weapon')
+        if eq is not None:
+            return eq
+        sel = self.get_selected_item()
+        if sel:
+            item_id, _cnt, _m = unpack_slot(sel)
+            d = ITEM_DEFS.get(item_id, {})
+            if d.get('type') == 'weapon':
+                return item_id
+        return None
+
+    def get_effective_weapon_item_def(self):
+        wid = self.get_effective_weapon_item_id()
+        return ITEM_DEFS.get(wid, {}) if wid else {}
+
+    def get_infused_rune_for_weapon_id(self, weapon_id):
+        """Return infused_rune id from equipment_meta or any bag/hotbar stack holding this weapon id."""
+        if not weapon_id:
+            return None
+        if self.equipment.get('weapon') == weapon_id:
+            return self.equipment_meta.get('weapon', {}).get('infused_rune')
+        for i in range(self.hotbar_size):
+            s = self.get_hotbar_slot(i)
+            if not s:
+                continue
+            iid, _c, meta = unpack_slot(s)
+            if iid == weapon_id and meta:
+                r = meta.get('infused_rune')
+                if r:
+                    return r
+        for i in range(self.num_slots):
+            s = self.get_slot(i)
+            if not s:
+                continue
+            iid, _c, meta = unpack_slot(s)
+            if iid == weapon_id and meta:
+                r = meta.get('infused_rune')
+                if r:
+                    return r
+        return None
+
     def get_weapon_damage(self, player_attrs):
         """Damage = weapon_base * (1 + strength/20) + scaling_stat * scaling_factor.
         Strength always contributes a multiplier; the weapon's scaling_stat adds flat bonus."""
-        weapon_id = self.equipment.get('weapon')
+        weapon_id = self.get_effective_weapon_item_id()
         if weapon_id is None:
             return 0
         weapon = ITEM_DEFS.get(weapon_id, {})
-        base = weapon.get('base_damage', PLAYER_ATTACK_DAMAGE)
-        strength = player_attrs.get('strength', 0)
-        scaling_stat = weapon.get('scaling_stat', 'strength')
-        scaling_factor = weapon.get('scaling_factor', 0.0)
-        scaling_val = player_attrs.get(scaling_stat, 0)
-        dmg = int(base * (1 + strength / 20) + scaling_val * scaling_factor)
-        if item_is_ranged_weapon(weapon):
-            dmg = max(1, int(round(dmg * RANGED_WEAPON_DAMAGE_MULT)))
-        return dmg
+        return weapon_damage_from_attrs(weapon, player_attrs)
 
     def get_weapon_cooldown_ms(self, base_cooldown_ms):
         """Return cooldown adjusted by equipped weapon attack_speed_bonus."""
-        weapon_id = self.equipment.get('weapon')
+        weapon_id = self.get_effective_weapon_item_id()
         if weapon_id is None:
             return int(base_cooldown_ms)
         weapon = ITEM_DEFS.get(weapon_id, {})
@@ -329,24 +424,22 @@ class Inventory:
 
     def get_weapon_attack_range_px(self):
         """Radius in world pixels for auto-attack targeting (from weapon attack_range_tiles)."""
-        tiles = self.get_weapon_attack_range_tiles()
-        return max(1, int(round(tiles * TILESIZE)))
+        weapon_id = self.get_effective_weapon_item_id()
+        if weapon_id is None:
+            return 0
+        weapon = ITEM_DEFS.get(weapon_id, {})
+        return weapon_range_px(weapon)
 
     def get_weapon_attack_range_tiles(self):
         """Attack range in tiles, clamped so all weapon attacks are at least 2 tiles."""
-        weapon_id = self.equipment.get('weapon')
+        weapon_id = self.get_effective_weapon_item_id()
         if weapon_id is None:
             return 0.0
         weapon = ITEM_DEFS.get(weapon_id, {})
-        tiles = weapon.get('attack_range_tiles', PLAYER_DEFAULT_ATTACK_RANGE_TILES)
-        try:
-            tiles = float(tiles)
-        except (TypeError, ValueError):
-            tiles = float(PLAYER_DEFAULT_ATTACK_RANGE_TILES)
-        return max(float(MIN_WEAPON_ATTACK_RANGE_TILES), tiles)
+        return weapon_range_tiles(weapon)
 
     def is_weapon_ranged(self):
-        weapon_id = self.equipment.get('weapon')
+        weapon_id = self.get_effective_weapon_item_id()
         if weapon_id is None:
             return False
         return item_is_ranged_weapon(ITEM_DEFS.get(weapon_id, {}))
