@@ -1,9 +1,9 @@
 import pygame as pg
 
 # Window and viewport size (fixed on screen). SCALE = zoom: higher = see less world, things look bigger.
-WIDTH = 1280
-HEIGHT = 720
-SCALE = 2  # Zoom level: view shows (WIDTH/SCALE x HEIGHT/SCALE) world, drawn at WIDTH x HEIGHT
+WIDTH = 1500
+HEIGHT = 900
+SCALE = 3  # Zoom level: view shows (WIDTH/SCALE x HEIGHT/SCALE) world, drawn at WIDTH x HEIGHT
 TITLE = "Relictus"
 FPS = 60
 TILESIZE = 32
@@ -98,8 +98,8 @@ HUD_XP_BAR_OUTLINE_W = 2
 # Inventory and item bar (hotbar)
 INVENTORY_SLOTS = 40
 HOTBAR_SLOTS = 8
-SLOT_SIZE = 44
-SLOT_GAP = 4
+SLOT_SIZE = 52
+SLOT_GAP = 6
 SLOT_BG = (50, 50, 50)
 SLOT_BORDER = (80, 80, 80)
 SLOT_SELECTED = GOLD

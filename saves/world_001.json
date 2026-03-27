@@ -1,15 +1,36 @@
 {
   "slots": [
+    [
+      "assassins_grace",
+      1
+    ],
+    [
+      "cobweb",
+      9
+    ],
+    [
+      "assassin_blade_shard",
+      2
+    ],
+    [
+      "gold_coin",
+      10
+    ],
+    null,
+    [
+      "assassin_handle_wrap",
+      1
+    ],
     null,
     null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
+    [
+      "assassins_grace",
+      1
+    ],
+    [
+      "stone_hammer",
+      1
+    ],
     null,
     null,
     null,
@@ -44,12 +65,15 @@
   "hotbar": [
     [
       "gold_coin",
-      33
+      73
     ],
-    null,
     [
       "gladius",
       1
+    ],
+    [
+      "health_potion",
+      2
     ],
     null,
     null,
@@ -64,19 +88,42 @@
     "boots": "legion_boots",
     "shield": null
   },
-  "selected_hotbar_index": 1,
-  "player_health": 185,
-  "current_level": "level2.txt",
+  "equipment_meta": {},
+  "selected_hotbar_index": 3,
+  "player_health": 190,
+  "current_level": "level5.txt",
   "mob_states": {
     "level1.txt": [],
-    "level2.txt": []
+    "level2.txt": [],
+    "level3.txt": [],
+    "level4.txt": [],
+    "level5.txt": [
+      {
+        "tile_x": 11,
+        "tile_y": 6,
+        "health": 200,
+        "state": "idle",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 9,
+        "tile_y": 18,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      }
+    ]
   },
-  "discovered_recipes": [],
+  "discovered_recipes": [
+    "assassins_grace",
+    "woven_cobweb"
+  ],
   "player_class_id": "legionnaire",
-  "player_level": 2,
-  "player_xp": 10,
-  "skill_points": 0,
+  "player_level": 6,
+  "player_xp": 200,
+  "skill_points": 3,
   "purchased_skill_nodes": [
-    "leg_brutality"
+    "leg_brutality",
+    "leg_discipline"
   ]
 }

@@ -10,7 +10,8 @@
         "sprite": "coin.png",
         "stackable": true,
         "max_stack": 99,
-        "description": "A worn gold coin from a forgotten empire."
+        "description": "A worn gold coin from a forgotten empire.",
+        "rarity": "common"
     },
     "health_potion": {
         "name": "Health Potion",
@@ -26,7 +27,8 @@
         "description": "Restores 50 health.",
         "effect": {
             "heal": 50
-        }
+        },
+        "rarity": "common"
     },
     "rusty_key": {
         "name": "Rusty Key",
@@ -39,7 +41,8 @@
         "sprite": null,
         "stackable": false,
         "max_stack": 1,
-        "description": "An ancient key. What does it open?"
+        "description": "An ancient key. What does it open?",
+        "rarity": "uncommon"
     },
     "iron_scrap": {
         "name": "Iron Scrap",
@@ -52,7 +55,8 @@
         "sprite": "ironscrap.png",
         "stackable": true,
         "max_stack": 99,
-        "description": "Salvaged metal. Used in forging."
+        "description": "Salvaged metal. Used in forging.",
+        "rarity": "common"
     },
     "leather_strip": {
         "name": "Leather Strip",
@@ -65,7 +69,8 @@
         "sprite": null,
         "stackable": true,
         "max_stack": 99,
-        "description": "Cut from old grips and sheaths."
+        "description": "Cut from old grips and sheaths.",
+        "rarity": "common"
     },
     "wood_splinter": {
         "name": "Wood Splinter",
@@ -78,7 +83,8 @@
         "sprite": "splinter.png",
         "stackable": true,
         "max_stack": 99,
-        "description": "Salvaged haft or bow wood."
+        "description": "Salvaged haft or bow wood.",
+        "rarity": "common"
     },
     "cobweb": {
         "name": "Cobweb",
@@ -91,7 +97,8 @@
         "sprite": "cobweb.png",
         "stackable": true,
         "max_stack": 99,
-        "description": "Dusty silk from a crumbling sentinel. Weave five into a sturdy string."
+        "description": "Dusty silk from a crumbling sentinel. Weave five into a sturdy string.",
+        "rarity": "common"
     },
     "string": {
         "name": "String",
@@ -104,7 +111,8 @@
         "sprite": "string.png",
         "stackable": true,
         "max_stack": 99,
-        "description": "Twisted fiber for grips, bows, and bindings."
+        "description": "Twisted fiber for grips, bows, and bindings.",
+        "rarity": "common"
     },
     "stone_chip": {
         "name": "Stone Chip",
@@ -117,7 +125,8 @@
         "sprite": "stonechip.png",
         "stackable": true,
         "max_stack": 99,
-        "description": "Flakes from a stone weapon."
+        "description": "Flakes from a stone weapon.",
+        "rarity": "common"
     },
     "arcane_sliver": {
         "name": "Arcane Sliver",
@@ -130,7 +139,8 @@
         "sprite": null,
         "stackable": true,
         "max_stack": 99,
-        "description": "Residual focus energy from a staff."
+        "description": "Residual focus energy from a staff.",
+        "rarity": "uncommon"
     },
     "assassin_blade_shard": {
         "name": "Assassin Blade Shard",
@@ -143,7 +153,8 @@
         "sprite": "assassingraceshard.png",
         "stackable": true,
         "max_stack": 20,
-        "description": "A fragment of a shadow-forged edge. Fits a dagger blade slot."
+        "description": "A fragment of a shadow-forged edge. Fits a dagger blade slot.",
+        "rarity": "uncommon"
     },
     "assassin_handle_wrap": {
         "name": "Assassin Handle Wrap",
@@ -156,7 +167,8 @@
         "sprite": "assassingracehandlewrap.png",
         "stackable": true,
         "max_stack": 20,
-        "description": "Worn silk and leather from a rogue's grip. Fits a dagger handle slot."
+        "description": "Worn silk and leather from a rogue's grip. Fits a dagger handle slot.",
+        "rarity": "uncommon"
     },
     "gladius": {
         "name": "Gladius",
@@ -466,7 +478,8 @@
         "defense": 15,
         "stat_bonus": {
             "health": 20
-        }
+        },
+        "rarity": "rare"
     },
     "galea": {
         "name": "Galea",
@@ -484,7 +497,8 @@
         "defense": 8,
         "stat_bonus": {
             "strength": 2
-        }
+        },
+        "rarity": "uncommon"
     },
     "caligae": {
         "name": "Caligae",
@@ -502,7 +516,8 @@
         "defense": 4,
         "stat_bonus": {
             "dexterity": 3
-        }
+        },
+        "rarity": "uncommon"
     },
     "scutum": {
         "name": "Scutum",
@@ -520,7 +535,8 @@
         "defense": 20,
         "stat_bonus": {
             "health": 10
-        }
+        },
+        "rarity": "rare"
     },
     "legion_helm": {
         "name": "Legionnaire Helm",
@@ -536,7 +552,8 @@
         "max_stack": 1,
         "description": "Standard-issue legionnaire helmet. Basic protection.",
         "defense": 3,
-        "stat_bonus": {}
+        "stat_bonus": {},
+        "rarity": "common"
     },
     "legion_cuirass": {
         "name": "Legionnaire Cuirass",
@@ -552,7 +569,8 @@
         "max_stack": 1,
         "description": "Standard-issue legionnaire chest plate. Worn but sturdy.",
         "defense": 6,
-        "stat_bonus": {}
+        "stat_bonus": {},
+        "rarity": "common"
     },
     "legion_boots": {
         "name": "Legionnaire Boots",
@@ -568,7 +586,8 @@
         "max_stack": 1,
         "description": "Standard-issue legionnaire boots. Good for marching.",
         "defense": 2,
-        "stat_bonus": {}
+        "stat_bonus": {},
+        "rarity": "common"
     },
     "ember_rune": {
         "name": "Vulcanian Ember",
@@ -583,7 +602,8 @@
         "max_stack": 20,
         "patron_god": "Vulcan",
         "patron_realm": "Fire, forge, and volcanic heat.",
-        "description": "A smoldering spark of the divine forge. Infusing a weapon channels Vulcan's heat into searing strikes."
+        "description": "A smoldering spark of the divine forge. Infusing a weapon channels Vulcan's heat into searing strikes.",
+        "rarity": "rare"
     },
     "frost_rune": {
         "name": "Boreal Frost",
@@ -598,7 +618,8 @@
         "max_stack": 20,
         "patron_god": "Boreas",
         "patron_realm": "Winds, snow, and frostbite (Roman counterpart to Boreas).",
-        "description": "A shard of frozen ice. Infusion binds Boreas' chill to the blade, hobbling foes."
+        "description": "A shard of frozen ice. Infusion binds Boreas' chill to the blade, hobbling foes.",
+        "rarity": "rare"
     },
     "storm_rune": {
         "name": "Jupiterian Spark",
@@ -613,7 +634,8 @@
         "max_stack": 20,
         "patron_god": "Jupiter",
         "patron_realm": "Sky, thunder, and sovereign lightning.",
-        "description": "A captured ribbon of thunder. Infusion binds Jupiter's lightning to the blade, seeking a second victim nearby."
+        "description": "A captured ribbon of thunder. Infusion binds Jupiter's lightning to the blade, seeking a second victim nearby.",
+        "rarity": "rare"
     },
     "aug_gladius": {
         "name": "Augmented Gladius",

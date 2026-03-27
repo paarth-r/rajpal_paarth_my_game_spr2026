@@ -126,7 +126,7 @@ class Game:
         self.inv_dragging = None    # (source, index, item_id, count[, meta_dict]) while dragging
         self.inv_drag_offset = (0, 0)
         self.inv_selected = None    # (source, index) for click-highlight
-        self.inventory_tab = 'character'  # 'character' | 'stats' | 'skills' | 'craft' | 'upgrade'
+        self.inventory_tab = 'character'  # 'character' | 'skills' | 'craft' | 'upgrade'
         self.stats_dropdown_open = False
         self.craft_selected_recipe_id = None
         self.pause_menu_open = False
@@ -234,13 +234,13 @@ class Game:
                 if event.key == pg.K_DELETE or event.key == pg.K_BACKSPACE:
                     self.player.clear_move_queue()
                 # Hold keys to queue moves (path preview); executes at speed
-                if event.key == pg.K_w:
+                if event.key in (pg.K_w, pg.K_UP):
                     self.player.queue_move(0, -1)
-                if event.key == pg.K_s:
+                if event.key in (pg.K_s, pg.K_DOWN):
                     self.player.queue_move(0, 1)
-                if event.key == pg.K_a:
+                if event.key in (pg.K_a, pg.K_LEFT):
                     self.player.queue_move(-1, 0)
-                if event.key == pg.K_d:
+                if event.key in (pg.K_d, pg.K_RIGHT):
                     self.player.queue_move(1, 0)
             if self.inventory_open and self.state == 'playing':
                 if event.type == pg.MOUSEBUTTONDOWN:
@@ -595,13 +595,13 @@ class Game:
         btn_w, btn_h = 320, 56
         x = WIDTH // 2 - btn_w // 2
         y0 = HEIGHT // 2 - 50
-        self.pause_save_btn_rect = pg.Rect(x, y0, btn_w, btn_h)
-        self.pause_quit_title_btn_rect = pg.Rect(x, y0 + 72, btn_w, btn_h)
-        self.pause_resume_btn_rect = pg.Rect(x, y0 + 144, btn_w, btn_h)
+        self.pause_resume_btn_rect = pg.Rect(x, y0, btn_w, btn_h)
+        self.pause_save_btn_rect = pg.Rect(x, y0 + 72, btn_w, btn_h)
+        self.pause_quit_title_btn_rect = pg.Rect(x, y0 + 144, btn_w, btn_h)
         for rect, text in (
+            (self.pause_resume_btn_rect, "Resume"),
             (self.pause_save_btn_rect, "Save Game"),
             (self.pause_quit_title_btn_rect, "Save & Quit to Title"),
-            (self.pause_resume_btn_rect, "Resume"),
         ):
             hover = rect.collidepoint(pg.mouse.get_pos())
             color = (80, 80, 80) if hover else (55, 55, 55)
@@ -850,6 +850,11 @@ class Game:
     def _slot_bg_for_item(self, item_id):
         if not item_id or item_id not in ITEM_DEFS:
             return SLOT_BG
+        # Keep these utility items visually fixed regardless of rarity.
+        if item_id == 'gold_coin':
+            return (245, 210, 70)  # always yellow
+        if item_id == 'health_potion':
+            return (185, 55, 55)   # always red
         r = ITEM_DEFS[item_id].get('rarity', 'common')
         return RARITY_SLOT_BG.get(r, SLOT_BG)
 
@@ -978,8 +983,8 @@ class Game:
         hovered_item_id = None
         hovered_item_meta = {}
 
-        panel_w = 960
-        panel_h = 580
+        panel_w = 1120
+        panel_h = 660
         panel_x = (WIDTH - panel_w) // 2
         panel_y = (HEIGHT - panel_h) // 2
         pg.draw.rect(self.screen, (30, 30, 30), (panel_x, panel_y, panel_w, panel_h))
@@ -994,21 +999,20 @@ class Game:
             True, UI_TEXT_BRIGHT)
         self.screen.blit(close_hint, (panel_x + 12, panel_y + panel_h - 22))
 
-        tab_char = pg.Rect(panel_x + 16, panel_y + 10, 100, 28)
-        tab_stats = pg.Rect(panel_x + 120, panel_y + 10, 100, 28)
-        tab_skills = pg.Rect(panel_x + 224, panel_y + 10, 100, 28)
-        tab_craft = pg.Rect(panel_x + 328, panel_y + 10, 100, 28)
-        tab_upgrade = pg.Rect(panel_x + 432, panel_y + 10, 112, 28)
+        tab_char = pg.Rect(panel_x + 16, panel_y + 10, 126, 30)
+        tab_skills = pg.Rect(panel_x + 148, panel_y + 10, 126, 30)
+        tab_craft = pg.Rect(panel_x + 280, panel_y + 10, 126, 30)
+        tab_upgrade = pg.Rect(panel_x + 412, panel_y + 10, 134, 30)
 
-        content_top = panel_y + 46
+        content_top = panel_y + 54
         left_x = panel_x + 20
         recipe_col_x = panel_x + 14
-        recipe_col_w = 208
+        recipe_col_w = 260
         inv_cols = INVENTORY_COLS
         inv_rows = INVENTORY_ROWS
         total_inv_w = inv_cols * SLOT_SIZE + (inv_cols - 1) * SLOT_GAP
-        # Keep inventory/hotbar as one 8-slot wide block, shifted left from right edge.
-        inv_x = panel_x + panel_w - total_inv_w - 70
+        # Keep inventory/hotbar as one 8-slot wide block with extra breathing room.
+        inv_x = panel_x + panel_w - total_inv_w - 50
         inv_start_y = content_top + 36
 
         if self.inventory_tab == 'character':
@@ -1083,35 +1087,6 @@ class Game:
                     b = bonuses.get(stat, 0)
                     self.screen.blit(font_sm.render(f"{stat[:3].upper()}: {attrs.get(stat,0)}  (armor +{b})", True, UI_TEXT_MUTED), (dd.x + 8, sy2))
                     sy2 += 18
-        elif self.inventory_tab == 'stats':
-            sy = content_top
-            self.screen.blit(font.render("Stats", True, GOLD), (left_x, sy))
-            sy += 28
-            cd = get_class_def(self.player_class_id)
-            if cd:
-                self.screen.blit(font_sm.render(f"{cd['name']}  |  Level {self.player_level}", True, UI_TEXT_MUTED), (left_x, sy))
-                sy += 22
-            attrs = self.player.get_effective_attrs()
-            bonuses = self.inventory.get_equipment_stat_bonuses()
-            for stat in ['strength', 'dexterity', 'intelligence', 'health']:
-                b = bonuses.get(stat, 0)
-                self.screen.blit(font_sm.render(f"{stat.capitalize()}: {attrs.get(stat, 0)}   (armor +{b})", True, UI_TEXT_BRIGHT), (left_x, sy))
-                sy += 22
-            sy += 10
-            eff_max = self.player.get_effective_max_health()
-            self.screen.blit(font_sm.render(f"HP: {self.player.health}/{eff_max}", True, UI_TEXT_BRIGHT), (left_x, sy)); sy += 20
-            self.screen.blit(font_sm.render(f"Damage: {self.player.get_effective_damage()}", True, UI_TEXT_BRIGHT), (left_x, sy)); sy += 20
-            self.screen.blit(font_sm.render(f"Defense: {self.inventory.get_total_defense()}", True, UI_TEXT_BRIGHT), (left_x, sy)); sy += 24
-            wid = self.inventory.get_effective_weapon_item_id()
-            w = ITEM_DEFS.get(wid, {}) if wid else {}
-            if w:
-                self.screen.blit(font_sm.render(f"Weapon: {w.get('name', wid)}", True, GOLD), (left_x, sy)); sy += 20
-                self.screen.blit(font_sm.render(f"Base {int(w.get('base_damage',0))} | Range {w.get('attack_range_tiles',2)}t | CD {weapon_cooldown_ms_for_item(wid)}ms", True, UI_TEXT_MUTED), (left_x, sy)); sy += 18
-                aout = w.get('augment_output')
-                if aout in ITEM_DEFS:
-                    aw = ITEM_DEFS[aout]
-                    self.screen.blit(font_sm.render(f"Augment: {aw.get('name', aout)}", True, GOLD), (left_x, sy)); sy += 18
-                    self.screen.blit(font_sm.render(f"Base {int(aw.get('base_damage',0))} | Range {aw.get('attack_range_tiles',2)}t | CD {weapon_cooldown_ms_for_item(aout)}ms", True, UI_TEXT_MUTED), (left_x, sy)); sy += 18
         elif self.inventory_tab == 'skills':
             sy = content_top
             cdef = get_class_def(self.player_class_id) or get_class_def(DEFAULT_CLASS_ID)
@@ -1244,9 +1219,16 @@ class Game:
             ):
                 self.craft_selected_recipe_id = known[0]['id']
 
-            mats_x = recipe_col_x + recipe_col_w + 18
+            mats_x = recipe_col_x + recipe_col_w + 20
+            recipe_panel = pg.Rect(recipe_col_x - 6, content_top - 8, recipe_col_w + 12, panel_h - (content_top - panel_y) - 58)
+            mats_panel_w = max(280, inv_x - mats_x - 20)
+            mats_panel = pg.Rect(mats_x - 8, content_top - 8, mats_panel_w + 16, panel_h - (content_top - panel_y) - 58)
+            pg.draw.rect(self.screen, (36, 38, 48), recipe_panel)
+            pg.draw.rect(self.screen, (92, 98, 120), recipe_panel, 2)
+            pg.draw.rect(self.screen, (36, 38, 48), mats_panel)
+            pg.draw.rect(self.screen, (92, 98, 120), mats_panel, 2)
 
-            self.screen.blit(font.render("Known recipes", True, GOLD), (recipe_col_x, content_top))
+            self.screen.blit(font.render("Known Recipes", True, GOLD), (recipe_col_x + 6, content_top))
             ry = content_top + 30
             if not known:
                 self.screen.blit(
@@ -1263,16 +1245,16 @@ class Game:
                 ry += 28
             for rec in known:
                 rid = rec['id']
-                rr = pg.Rect(recipe_col_x, ry, recipe_col_w, 30)
+                rr = pg.Rect(recipe_col_x + 6, ry, recipe_col_w - 12, 34)
                 sel = rid == self.craft_selected_recipe_id
                 pg.draw.rect(self.screen, (48, 72, 52) if sel else (42, 44, 52), rr)
                 pg.draw.rect(self.screen, GOLD if sel else (110, 115, 135), rr, 2)
                 name_s = font_sm.render(rec.get('display_name', rid), True, UI_TEXT_BRIGHT)
-                self.screen.blit(name_s, (rr.x + 8, rr.y + 7))
+                self.screen.blit(name_s, (rr.x + 8, rr.y + 9))
                 self.inv_slot_rects.append((rr, 'craft_recipe', rid))
-                ry += 34
+                ry += 38
 
-            self.screen.blit(font.render("Materials", True, GOLD), (mats_x, content_top))
+            self.screen.blit(font.render("Crafting Bench", True, GOLD), (mats_x, content_top))
             recipe_obj = RECIPES.get(self.craft_selected_recipe_id) if known else None
             my = content_top + 30
             if recipe_obj:
@@ -1327,23 +1309,30 @@ class Game:
                         (mats_x + 8 + SLOT_SIZE + SLOT_GAP, my + 12))
                     my += SLOT_SIZE + 20
 
-                cbtn = pg.Rect(mats_x, my + 4, 190, 38)
+                cbtn = pg.Rect(mats_x, my + 10, 220, 42)
                 pg.draw.rect(self.screen, (52, 92, 58), cbtn)
                 pg.draw.rect(self.screen, GOLD, cbtn, 2)
-                self.screen.blit(font_md.render("Craft", True, UI_TEXT_BRIGHT), (cbtn.x + 64, cbtn.y + 9))
+                self.screen.blit(font_md.render("Craft Item", True, UI_TEXT_BRIGHT), (cbtn.x + 58, cbtn.y + 11))
                 self.inv_slot_rects.append((cbtn, 'craft_btn', 0))
             elif not known:
                 self.screen.blit(
                     font_sm.render("Discover a recipe to see materials here.", True, UI_TEXT_DIM),
                     (mats_x, my))
         else:
-            up_x = recipe_col_x + recipe_col_w + 18
+            up_x = recipe_col_x + recipe_col_w + 20
+            up_panel_w = max(320, inv_x - up_x - 20)
+            guide_panel = pg.Rect(up_x - 8, content_top - 8, up_panel_w + 16, 86)
+            forge_panel = pg.Rect(up_x - 8, content_top + 88, up_panel_w + 16, 260)
+            pg.draw.rect(self.screen, (36, 38, 48), guide_panel)
+            pg.draw.rect(self.screen, (92, 98, 120), guide_panel, 2)
+            pg.draw.rect(self.screen, (36, 38, 48), forge_panel)
+            pg.draw.rect(self.screen, (92, 98, 120), forge_panel, 2)
             self.screen.blit(font.render("Upgrade Forge", True, GOLD), (up_x, content_top))
             uy = content_top + 34
             self.screen.blit(
                 font_sm.render("Infuse a weapon with a rune + coins to forge an augmented weapon.", True, UI_TEXT_MUTED),
                 (up_x, uy))
-            uy += 30
+            uy += 72
             self.screen.blit(font_md.render("Weapon", True, GOLD), (up_x, uy))
             uy += 24
             wid = self.inventory._upgrade_weapon_item_id
@@ -1373,46 +1362,46 @@ class Game:
             status_col = (120, 220, 130) if ok else (220, 130, 130)
             self.screen.blit(font_sm.render("Ready" if ok else reason, True, status_col), (up_x, uy))
             uy += 26
-            ubtn = pg.Rect(up_x, uy, 210, 38)
+            ubtn = pg.Rect(up_x, uy, 240, 42)
             pg.draw.rect(self.screen, (64, 82, 122), ubtn)
             pg.draw.rect(self.screen, GOLD, ubtn, 2)
-            self.screen.blit(font_md.render("Infuse Weapon", True, UI_TEXT_BRIGHT), (ubtn.x + 42, ubtn.y + 9))
+            self.screen.blit(font_md.render("Infuse Weapon", True, UI_TEXT_BRIGHT), (ubtn.x + 52, ubtn.y + 11))
             self.inv_slot_rects.append((ubtn, 'upgrade_btn', 0))
 
-        self.screen.blit(font.render("Inventory", True, GOLD), (inv_x, content_top))
-        hb_y = content_top + 34
-        for i in range(HOTBAR_SLOTS):
-            hx = inv_x + i * (SLOT_SIZE + SLOT_GAP)
-            hdata = self.inventory.get_hotbar_slot(i)
-            is_h_drag = self.inv_dragging and self.inv_dragging[0] == 'hotbar' and self.inv_dragging[1] == i
-            is_h_sel = i == self.inventory.selected_hotbar_index
-            hr = self.draw_slot(hx, hb_y, hdata, selected=is_h_sel, dimmed=is_h_drag)
-            self.inv_slot_rects.append((hr, 'hotbar', i))
-            if hr.collidepoint(mouse_pos) and hdata and not is_h_drag:
-                hovered_item_id = hdata[0]
-                _hid, _hc, hmeta = unpack_slot(hdata)
-                hovered_item_meta = dict(hmeta) if hmeta else {}
-        self.screen.blit(font_sm.render("Hotbar", True, UI_TEXT_MUTED), (inv_x, hb_y + SLOT_SIZE + 6))
-        inv_start_y = hb_y + SLOT_SIZE + 24
-        for row in range(inv_rows):
-            for col in range(inv_cols):
-                idx = row * inv_cols + col
-                sx = inv_x + col * (SLOT_SIZE + SLOT_GAP)
-                sy = inv_start_y + row * (SLOT_SIZE + SLOT_GAP)
-                slot_data = self.inventory.get_slot(idx)
-                is_drag_src = self.inv_dragging and self.inv_dragging[0] == 'inv' and self.inv_dragging[1] == idx
-                is_selected = self.inv_selected == ('inv', idx)
-                r = self.draw_slot(sx, sy, slot_data, selected=False, highlight=is_selected, dimmed=is_drag_src)
-                self.inv_slot_rects.append((r, 'inv', idx))
-                if r.collidepoint(mouse_pos) and slot_data and not is_drag_src:
-                    hovered_item_id = slot_data[0]
-                    _iid, _ic, imeta = unpack_slot(slot_data)
-                    hovered_item_meta = dict(imeta) if imeta else {}
+        if self.inventory_tab != 'skills':
+            self.screen.blit(font.render("Inventory", True, GOLD), (inv_x, content_top))
+            hb_y = content_top + 34
+            for i in range(HOTBAR_SLOTS):
+                hx = inv_x + i * (SLOT_SIZE + SLOT_GAP)
+                hdata = self.inventory.get_hotbar_slot(i)
+                is_h_drag = self.inv_dragging and self.inv_dragging[0] == 'hotbar' and self.inv_dragging[1] == i
+                is_h_sel = i == self.inventory.selected_hotbar_index
+                hr = self.draw_slot(hx, hb_y, hdata, selected=is_h_sel, dimmed=is_h_drag)
+                self.inv_slot_rects.append((hr, 'hotbar', i))
+                if hr.collidepoint(mouse_pos) and hdata and not is_h_drag:
+                    hovered_item_id = hdata[0]
+                    _hid, _hc, hmeta = unpack_slot(hdata)
+                    hovered_item_meta = dict(hmeta) if hmeta else {}
+            self.screen.blit(font_sm.render("Hotbar", True, UI_TEXT_MUTED), (inv_x, hb_y + SLOT_SIZE + 6))
+            inv_start_y = hb_y + SLOT_SIZE + 24
+            for row in range(inv_rows):
+                for col in range(inv_cols):
+                    idx = row * inv_cols + col
+                    sx = inv_x + col * (SLOT_SIZE + SLOT_GAP)
+                    sy = inv_start_y + row * (SLOT_SIZE + SLOT_GAP)
+                    slot_data = self.inventory.get_slot(idx)
+                    is_drag_src = self.inv_dragging and self.inv_dragging[0] == 'inv' and self.inv_dragging[1] == idx
+                    is_selected = self.inv_selected == ('inv', idx)
+                    r = self.draw_slot(sx, sy, slot_data, selected=False, highlight=is_selected, dimmed=is_drag_src)
+                    self.inv_slot_rects.append((r, 'inv', idx))
+                    if r.collidepoint(mouse_pos) and slot_data and not is_drag_src:
+                        hovered_item_id = slot_data[0]
+                        _iid, _ic, imeta = unpack_slot(slot_data)
+                        hovered_item_meta = dict(imeta) if imeta else {}
 
         tab_hit = []
         for rect, tid, lbl in (
             (tab_char, 'character', 'Character'),
-            (tab_stats, 'stats', 'Stats'),
             (tab_skills, 'skills', 'Skills'),
             (tab_craft, 'craft', 'Craft'),
             (tab_upgrade, 'upgrade', 'Upgrade'),
@@ -1616,12 +1605,6 @@ class Game:
                     if self.inventory_tab == 'upgrade':
                         self.inventory.return_upgrade_staging()
                     self.inventory_tab = 'character'
-                elif index == 'stats':
-                    if self.inventory_tab == 'craft':
-                        self.inventory.return_craft_staging()
-                    if self.inventory_tab == 'upgrade':
-                        self.inventory.return_upgrade_staging()
-                    self.inventory_tab = 'stats'
                 elif index == 'skills':
                     if self.inventory_tab == 'craft':
                         self.inventory.return_craft_staging()
