@@ -39,17 +39,35 @@ def recipe_inputs_required(recipe):
     return {k: v for k, v in inputs.items() if v is not None}
 
 
+def normalize_craft_placement(val):
+    """Craft slot may store item_id (legacy) or (item_id, count)."""
+    if val is None:
+        return None, 0
+    if isinstance(val, (list, tuple)) and len(val) >= 2:
+        return val[0], int(val[1])
+    if isinstance(val, str):
+        return val, 1
+    return None, 0
+
+
+def recipe_slot_quantity(recipe, slot_key):
+    return max(1, int(recipe.get('input_counts', {}).get(slot_key, 1)))
+
+
 def can_craft(inventory, recipe_id):
     """True if craft_placements match recipe (items already staged in craft UI)."""
     recipe = RECIPES.get(recipe_id)
     if recipe is None:
         return False
-    required = recipe_inputs_required(recipe)
     placements = getattr(inventory, '_craft_placements', None)
     if placements is None:
         return False
-    for slot, need_id in required.items():
-        if placements.get(slot) != need_id:
+    for slot_key, need_id in recipe.get('inputs', {}).items():
+        if need_id is None:
+            continue
+        need_n = recipe_slot_quantity(recipe, slot_key)
+        pid, pn = normalize_craft_placement(placements.get(slot_key))
+        if pid != need_id or pn != need_n:
             return False
     return True
 
@@ -111,7 +129,9 @@ def try_finish_infusion(inventory):
     coin_cost = int(w.get('augment_coin_cost', 25))
     if inventory.remove_item_by_id('gold_coin', coin_cost) < coin_cost:
         return False, "Not enough gold coins."
-    if inventory.add_item(out_id, 1) > 0:
+    rune_id = inventory._upgrade_rune_item_id
+    forged_meta = {'infused_rune': rune_id} if rune_id else None
+    if inventory.add_item(out_id, 1, slot_meta=forged_meta) > 0:
         inventory.add_item('gold_coin', coin_cost)
         return False, "Inventory full."
     inventory._upgrade_weapon_item_id = None

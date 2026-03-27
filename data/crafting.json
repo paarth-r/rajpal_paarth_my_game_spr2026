@@ -9,8 +9,12 @@
             "description": "Daggers omit a hilt; blade and handle."
         },
         "bow": {
-            "slots": ["string", "grip"],
-            "description": "Bows use string and grip."
+            "slots": ["string", "handle"],
+            "description": "Bows use a string and a wooden handle (stave)."
+        },
+        "material_batch": {
+            "slots": ["bundle"],
+            "description": "Combine multiple units of one material."
         },
         "staff": {
             "slots": ["focus", "shaft"],
@@ -30,6 +34,38 @@
             },
             "output": {
                 "item_id": "assassins_grace",
+                "count": 1
+            }
+        },
+        {
+            "id": "woven_cobweb",
+            "display_name": "Woven Cobweb",
+            "starts_known": false,
+            "discover_on_items": ["cobweb"],
+            "weapon_type": "material_batch",
+            "inputs": {
+                "bundle": "cobweb"
+            },
+            "input_counts": {
+                "bundle": 5
+            },
+            "output": {
+                "item_id": "string",
+                "count": 1
+            }
+        },
+        {
+            "id": "assassin_shortbow",
+            "display_name": "Assassin's Shortbow",
+            "starts_known": false,
+            "discover_on_items": ["string"],
+            "weapon_type": "bow",
+            "inputs": {
+                "string": "string",
+                "handle": "wood_splinter"
+            },
+            "output": {
+                "item_id": "assassin_shortbow",
                 "count": 1
             }
         }

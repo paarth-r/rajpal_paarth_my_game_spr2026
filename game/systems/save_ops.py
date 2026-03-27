@@ -3,7 +3,7 @@ import json
 import os
 from os import path
 
-from inventory import ITEM_DEFS, EQUIPMENT_SLOTS
+from inventory import ITEM_DEFS, EQUIPMENT_SLOTS, pack_slot, unpack_slot
 from progression import DEFAULT_CLASS_ID, get_class_def
 from crafting import default_starts_known_recipe_ids, recipes_unlocked_by_item
 
@@ -157,11 +157,21 @@ def _snapshot_current_level_mobs(self):
 def save_inventory_state(self):
     try:
         self.mob_states_by_level[self.current_level_name] = self._snapshot_current_level_mobs()
-        slots = [([slot[0], slot[1]] if slot is not None else None) for slot in self.inventory.slots]
+        def _serialize_slot(s):
+            if s is None:
+                return None
+            item_id, cnt, meta = unpack_slot(s)
+            if meta:
+                return [item_id, cnt, meta]
+            return [item_id, cnt]
+
+        slots = [_serialize_slot(slot) for slot in self.inventory.slots]
+        em = {k: dict(v) for k, v in self.inventory.equipment_meta.items() if v}
         payload = {
             'slots': slots,
-            'hotbar': [([s[0], s[1]] if s is not None else None) for s in self.inventory.hotbar],
+            'hotbar': [_serialize_slot(s) for s in self.inventory.hotbar],
             'equipment': dict(self.inventory.equipment),
+            'equipment_meta': em,
             'selected_hotbar_index': int(self.inventory.selected_hotbar_index),
             'player_health': int(self.player.health),
             'current_level': self.current_level_name,
@@ -192,17 +202,19 @@ def load_inventory_state(self):
             if s is None:
                 self.inventory.slots[i] = None
                 continue
-            if not isinstance(s, list) or len(s) != 2:
+            if not isinstance(s, list) or len(s) < 2:
                 continue
-            item_id, count = s
+            item_id, count = s[0], s[1]
+            meta = s[2] if len(s) >= 3 and isinstance(s[2], dict) else None
             if item_id in ITEM_DEFS and isinstance(count, int) and count > 0:
-                self.inventory.slots[i] = (item_id, count)
+                self.inventory.slots[i] = pack_slot(item_id, count, meta)
         hot = payload.get('hotbar')
         if isinstance(hot, list):
             for i in range(min(len(hot), self.inventory.hotbar_size)):
                 s = hot[i]
-                if isinstance(s, list) and len(s) == 2 and s[0] in ITEM_DEFS and isinstance(s[1], int) and s[1] > 0:
-                    self.inventory.hotbar[i] = (s[0], s[1])
+                if isinstance(s, list) and len(s) >= 2 and s[0] in ITEM_DEFS and isinstance(s[1], int) and s[1] > 0:
+                    hmeta = s[2] if len(s) >= 3 and isinstance(s[2], dict) else None
+                    self.inventory.hotbar[i] = pack_slot(s[0], s[1], hmeta)
         else:
             for i in range(min(self.inventory.hotbar_size, self.inventory.num_slots)):
                 s = self.inventory.slots[i]
@@ -212,6 +224,12 @@ def load_inventory_state(self):
         for slot_name in EQUIPMENT_SLOTS:
             item_id = eq.get(slot_name)
             self.inventory.equipment[slot_name] = item_id if item_id in ITEM_DEFS else None
+        self.inventory.equipment_meta.clear()
+        raw_em = payload.get('equipment_meta', {})
+        if isinstance(raw_em, dict):
+            for slot_name, meta in raw_em.items():
+                if slot_name in EQUIPMENT_SLOTS and isinstance(meta, dict) and meta:
+                    self.inventory.equipment_meta[slot_name] = dict(meta)
         idx = int(payload.get('selected_hotbar_index', 0))
         self.inventory.selected_hotbar_index = max(0, min(self.inventory.hotbar_size - 1, idx))
         saved_hp = payload.get('player_health')
@@ -245,14 +263,14 @@ def _sync_discovered_recipes_from_inventory(self):
         s = self.inventory.get_slot(i)
         if not s:
             continue
-        item_id, _ = s
+        item_id, _, _meta = unpack_slot(s)
         for rid in recipes_unlocked_by_item(item_id):
             self.discovered_recipe_ids.add(rid)
     for i in range(self.inventory.hotbar_size):
         s = self.inventory.get_hotbar_slot(i)
         if not s:
             continue
-        item_id, _ = s
+        item_id, _, _meta = unpack_slot(s)
         for rid in recipes_unlocked_by_item(item_id):
             self.discovered_recipe_ids.add(rid)
 

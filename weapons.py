@@ -10,7 +10,10 @@ from settings import (
 
 
 def item_is_ranged_weapon(item_def):
-    return item_def.get('type') == 'weapon' and item_def.get('weapon_type') == 'staff'
+    if item_def.get('type') != 'weapon':
+        return False
+    wt = item_def.get('weapon_type')
+    return wt in ('staff', 'bow')
 
 
 def weapon_cooldown_ms_for_item(item):
@@ -43,4 +46,37 @@ def weapon_range_tiles(item):
 
 def weapon_range_px(item):
     return max(1, int(round(weapon_range_tiles(item) * TILESIZE)))
+
+
+def resolve_on_hit_effect(item_def, infused_rune_id):
+    """Augmented weapons define rune_blessings per rune; else fall back to on_hit_effect."""
+    if not item_def:
+        return {}
+    rb = item_def.get('rune_blessings', {})
+    if infused_rune_id and infused_rune_id in rb:
+        eff = rb[infused_rune_id].get('on_hit_effect')
+        if eff:
+            return eff
+    return item_def.get('on_hit_effect', {}) or {}
+
+
+def format_on_hit_effect_tooltip(eff):
+    """One line describing proc for tooltips."""
+    if not eff:
+        return None
+    kind = eff.get('kind')
+    if kind == 'burn_on_hit':
+        dur = int(eff.get('duration_ms', 4000)) / 1000.0
+        ti = int(eff.get('tick_interval_ms', 500)) / 1000.0
+        dpt = int(eff.get('damage_per_tick', 4))
+        return f"On-hit: lingering fire — {dpt} damage every {ti:.1f}s for {dur:.1f}s (Vulcan)"
+    if kind == 'slow_on_hit':
+        dur = int(eff.get('duration_ms', 2000)) / 1000.0
+        sm = int((1.0 - float(eff.get('move_mult', 0.55))) * 100)
+        return f"On-hit: slow move speed by {sm}% for {dur:.1f}s (Neptune)"
+    if kind == 'chain_damage':
+        frac = int(float(eff.get('damage_fraction', 0.35)) * 100)
+        rt = float(eff.get('radius_tiles', 2))
+        return f"On-hit: arc {frac}% damage to nearest foe within {rt} tiles (Jupiter)"
+    return None
 

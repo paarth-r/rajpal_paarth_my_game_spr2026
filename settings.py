@@ -21,7 +21,7 @@ MIN_WEAPON_ATTACK_RANGE_TILES = 2
 PLAYER_MAX_HEALTH = 100
 PLAYER_ATTACK_DAMAGE = 50
 PLAYER_ATTACK_COOLDOWN_MS = 400  # ms after attack ends before next attack allowed (HUD shows this)
-# Ranged attacks (all staff weapons) trade damage for safety.
+# Ranged attacks (staves and bows) trade damage for safety.
 RANGED_WEAPON_DAMAGE_MULT = 0.7
 PROJECTILE_SPEED_PX_PER_SEC = 640
 PROJECTILE_RADIUS_PX = 5
@@ -105,11 +105,14 @@ SLOT_BORDER = (80, 80, 80)
 SLOT_SELECTED = GOLD
 # Inventory / hotbar slot tint behind item icon (by item rarity)
 RARITY_SLOT_BG = {
-    'common': (52, 52, 56),
-    'uncommon': (42, 58, 48),
-    'rare': (38, 48, 78),
-    'epic': (68, 38, 88),
-    'legendary': (92, 62, 28),
+    'common': (95, 95, 95),         # grey
+    'uncommon': (148, 210, 148),    # light green
+    'rare': (145, 195, 255),        # light blue
+    'epic': (170, 120, 220),        # purple
+    'legendary': (240, 205, 95),    # gold
+    'mythic': (245, 145, 210),      # pink
+    'divine': (85, 150, 255),       # blue
+    'gamebreaking': (240, 70, 70),  # red
 }
 UI_TEXT_BRIGHT = (245, 245, 248)
 UI_TEXT_MUTED = (190, 195, 210)

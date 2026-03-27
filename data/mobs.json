@@ -51,6 +51,14 @@
                 "chance": 0.15
             },
             {
+                "item_id": "cobweb",
+                "count": [
+                    1,
+                    3
+                ],
+                "chance": 1.0
+            },
+            {
                 "item_id": "galea",
                 "count": [
                     1,

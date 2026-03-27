@@ -138,7 +138,7 @@ class Player(Sprite):
         now = pg.time.get_ticks()
         weapon_id = None
         if hasattr(self.game, 'inventory'):
-            weapon_id = self.game.inventory.equipment.get('weapon')
+            weapon_id = self.game.inventory.get_effective_weapon_item_id()
         # Cannot attack unarmed.
         if weapon_id is None:
             return
@@ -449,6 +449,35 @@ class Mob(Sprite):
         self.slide_from = None
         self.slide_start_time = 0
         self.slide_duration_ms = self.mob_slide_duration
+        # Rune effects (Neptune's chill): slow expires by status_slow_until
+        self.status_slow_until = 0
+        self.status_slow_move_mult = 1.0
+        # Vulcan lingering fire
+        self.status_burn_until = 0
+        self.status_burn_next_tick = 0
+        self.status_burn_damage_per_tick = 0
+        self.status_burn_interval_ms = 500
+
+    def apply_rune_burn(self, duration_ms, tick_interval_ms, damage_per_tick):
+        """Refresh lingering fire: always-on DoT while duration lasts."""
+        now = pg.time.get_ticks()
+        self.status_burn_until = now + int(duration_ms)
+        self.status_burn_interval_ms = max(1, int(tick_interval_ms))
+        self.status_burn_damage_per_tick = max(0, int(damage_per_tick))
+        self.status_burn_next_tick = now + self.status_burn_interval_ms
+
+    def apply_rune_slow(self, duration_ms, move_mult):
+        """Reduce move_mult (0.5 = half speed) for duration_ms; strongest slow wins."""
+        now = pg.time.get_ticks()
+        self.status_slow_until = max(getattr(self, 'status_slow_until', 0), now + int(duration_ms))
+        self.status_slow_move_mult = min(getattr(self, 'status_slow_move_mult', 1.0), float(move_mult))
+
+    def _effective_move_delay_ms(self):
+        now = pg.time.get_ticks()
+        if now >= getattr(self, 'status_slow_until', 0):
+            return self.mob_move_delay
+        m = max(0.2, float(getattr(self, 'status_slow_move_mult', 1.0)))
+        return int(self.mob_move_delay / m)
 
     def _image_for_frame(self, frame_surf):
         """Return frame with flip applied; cache result to avoid flicker from new surfaces every frame."""
@@ -513,6 +542,30 @@ class Mob(Sprite):
             self.game.add_damage_number(self.hit_rect.center, dmg, color=(255, 60, 60))
         if self.health <= 0 and old_hp > 0:
             self.state = 'dead'
+            self.status_burn_until = 0
+            self.status_burn_next_tick = 0
+            self.anim_frame = 0
+            self.last_anim = pg.time.get_ticks()
+            self.vel = vec(0, 0)
+            self._update_image_cache(self.death_frames[0])
+            if hasattr(self.game, 'on_mob_kill'):
+                self.game.on_mob_kill(self)
+
+    def apply_burn_tick_damage(self, damage):
+        """Fire DoT tick: red float like other damage; no rune chain."""
+        if self.state == 'dead':
+            return
+        dmg = max(0, int(damage))
+        if dmg <= 0:
+            return
+        old_hp = self.health
+        self.health = max(0, self.health - dmg)
+        if hasattr(self.game, 'add_damage_number'):
+            self.game.add_damage_number(self.hit_rect.center, dmg, color=(255, 60, 60))
+        if self.health <= 0 and old_hp > 0:
+            self.state = 'dead'
+            self.status_burn_until = 0
+            self.status_burn_next_tick = 0
             self.anim_frame = 0
             self.last_anim = pg.time.get_ticks()
             self.vel = vec(0, 0)
@@ -522,6 +575,17 @@ class Mob(Sprite):
 
     def update(self):
         now = pg.time.get_ticks()
+        if now >= getattr(self, 'status_slow_until', 0):
+            self.status_slow_move_mult = 1.0
+        bu = getattr(self, 'status_burn_until', 0)
+        if bu > 0 and now >= bu:
+            self.status_burn_until = 0
+            self.status_burn_next_tick = 0
+        elif self.state != 'dead' and bu > 0 and now >= getattr(self, 'status_burn_next_tick', 0):
+            dpt = int(getattr(self, 'status_burn_damage_per_tick', 0))
+            if dpt > 0:
+                self.apply_burn_tick_damage(dpt)
+            self.status_burn_next_tick = now + int(getattr(self, 'status_burn_interval_ms', 500))
         player = self.game.player
         px, py = player.tile_x, player.tile_y
         dx_tile = px - self.tile_x
@@ -573,6 +637,10 @@ class Mob(Sprite):
         ):
             self.heal_used = True
             self.health = min(self.max_health, self.health + self.heal_once_amount)
+            if hasattr(self.game, 'add_damage_number'):
+                self.game.add_damage_number(
+                    self.hit_rect.center, self.heal_once_amount, color=(100, 240, 130)
+                )
             self.state = 'heal'
             self.anim_frame = 0
             self.last_anim = now
@@ -634,8 +702,8 @@ class Mob(Sprite):
             self._ensure_rect_valid()
             return
 
-        # Tile-based move: one step every MOB_MOVE_DELAY toward player
-        if in_chase and self.move_target is None and (now - self.last_move) >= self.mob_move_delay:
+        # Tile-based move: one step every MOB_MOVE_DELAY toward player (slow increases effective delay)
+        if in_chase and self.move_target is None and (now - self.last_move) >= self._effective_move_delay_ms():
             self.last_move = now
             if adjacent:
                 pass  # next tick can attack
@@ -716,6 +784,8 @@ class Projectile(Sprite):
         to_target = target_pos - self.pos
         if to_target.length_squared() <= 0:
             self.target.hurt(self.damage)
+            if hasattr(self.game, 'apply_rune_on_hit_effects'):
+                self.game.apply_rune_on_hit_effects(self.target, self.damage)
             self.kill()
             return
         vel = to_target.normalize()
@@ -734,6 +804,8 @@ class Projectile(Sprite):
             return
         if self.rect.colliderect(self.target.hit_rect):
             self.target.hurt(self.damage)
+            if hasattr(self.game, 'apply_rune_on_hit_effects'):
+                self.game.apply_rune_on_hit_effects(self.target, self.damage)
             self.kill()
             return
 
