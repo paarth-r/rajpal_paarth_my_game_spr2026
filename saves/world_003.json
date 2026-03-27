@@ -1,0 +1,93 @@
+{
+  "slots": [
+    [
+      "gold_coin",
+      21
+    ],
+    null,
+    [
+      "iron_scrap",
+      3
+    ],
+    [
+      "stone_hammer",
+      1
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "hotbar": [
+    null,
+    [
+      "health_potion",
+      1
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "equipment": {
+    "weapon": "pugio",
+    "head": "legion_helm",
+    "chest": "legion_cuirass",
+    "boots": "caligae",
+    "shield": null
+  },
+  "selected_hotbar_index": 1,
+  "player_health": 95,
+  "current_level": "level1.txt",
+  "mob_states": {
+    "level1.txt": [
+      {
+        "tile_x": 17,
+        "tile_y": 7,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      }
+    ]
+  },
+  "discovered_recipes": [],
+  "player_class_id": "assassin",
+  "player_level": 4,
+  "player_xp": 20,
+  "skill_points": 3,
+  "purchased_skill_nodes": []
+}
