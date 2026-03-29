@@ -271,5 +271,33 @@
                 "chance": 0.014
             }
         ]
+    },
+    "training_dummy": {
+        "name": "Straw Target",
+        "spritesheet": "statue.png",
+        "key_checkerboard_grays": true,
+        "frame_w": 127,
+        "frame_h": 133,
+        "sheet_grid_cols": 8,
+        "sheet_grid_rows": 4,
+        "center_grid_on_sheet": true,
+        "idle_frames": 4,
+        "walk_frames": 8,
+        "attack_frames": 5,
+        "death_frames": 6,
+        "hp": 28,
+        "damage": 6,
+        "speed": 8,
+        "chase_range_tiles": 4,
+        "activation_range_tiles": 4,
+        "attack_cooldown_ms": 5000,
+        "attack_range_tiles": 1.1,
+        "xp": 8,
+        "move_delay_ms": 700,
+        "slide_duration_ms": 280,
+        "attack_anim_speed_ms": 180,
+        "anim_speed_ms": 140,
+        "hit_frame": 3,
+        "drops": []
     }
 }

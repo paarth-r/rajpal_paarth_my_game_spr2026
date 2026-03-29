@@ -1280,5 +1280,23 @@
                 }
             }
         }
+    },
+    "lichenward_strap": {
+        "name": "Lichenward Strap",
+        "type": "armor",
+        "slot": "shield",
+        "color": [
+            72,
+            120,
+            88
+        ],
+        "sprite": null,
+        "stackable": false,
+        "max_stack": 1,
+        "defense": 0,
+        "stat_bonus": {},
+        "rarity": "epic",
+        "shield_trail_nearest_mob": true,
+        "description": "Corpse-wagons once hung damp copper mesh at the vault gate; lichen grew only where draft beasts were tethered, and the growth always leaned toward living breath. Yours still does—softly, hungrily—toward whatever in the hall still has pulse enough to notice."
     }
 }

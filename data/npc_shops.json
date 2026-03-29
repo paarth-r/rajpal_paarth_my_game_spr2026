@@ -1,0 +1,5 @@
+{
+    "version": 1,
+    "templates": [],
+    "note": "NPC-facing shop definitions (separate from player_shop.json). Wired in a future pass."
+}

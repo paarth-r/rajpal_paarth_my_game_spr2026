@@ -1,0 +1,112 @@
+{
+  "slots": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "hotbar": [
+    [
+      "gold_coin",
+      11
+    ],
+    null,
+    [
+      "iron_scrap",
+      3
+    ],
+    [
+      "cobweb",
+      5
+    ],
+    null,
+    null,
+    null,
+    null
+  ],
+  "equipment": {
+    "weapon": "pugio",
+    "head": "legion_helm",
+    "chest": "legion_cuirass",
+    "boots": "caligae",
+    "shield": null
+  },
+  "equipment_meta": {},
+  "selected_hotbar_index": 1,
+  "player_health": 100,
+  "current_level": "level1.txt",
+  "mob_states": {
+    "intro.txt": [],
+    "level1.txt": [
+      {
+        "tile_x": 17,
+        "tile_y": 7,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 21,
+        "tile_y": 20,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 20,
+        "tile_y": 21,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      }
+    ]
+  },
+  "discovered_recipes": [
+    "woven_cobweb"
+  ],
+  "player_class_id": "assassin",
+  "player_level": 3,
+  "player_xp": 35,
+  "skill_points": 2,
+  "purchased_skill_nodes": [],
+  "opened_chests": [
+    "intro.txt:13,1"
+  ],
+  "intro_exit_unlocked": true
+}

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import json
 import os
+import math
 from collections import deque
 from os import path
 from settings import *
@@ -38,7 +39,9 @@ from progression import (
     get_class_def,
     xp_for_next_level,
 )
+from game.systems import intro_ops
 from game.systems import progression_ops as progression_system
+from game.systems import player_shop as player_shop_system
 from game.systems import save_ops as save_system
 from game.systems import world_ops as world_system
 
@@ -138,7 +141,7 @@ class Game:
         self.inv_dragging = None    # (source, index, item_id, count[, meta_dict]) while dragging
         self.inv_drag_offset = (0, 0)
         self.inv_selected = None    # (source, index) for click-highlight
-        self.inventory_tab = 'character'  # 'character' | 'skills' | 'craft' | 'upgrade'
+        self.inventory_tab = 'character'  # 'character' | 'skills' | 'craft' | 'upgrade' | 'shop'
         self.stats_dropdown_open = False
         self.craft_selected_recipe_id = None
         self.pause_menu_open = False
@@ -251,6 +254,8 @@ class Game:
                     self.player.attack()
                 if event.key == pg.K_f:
                     self.use_selected_item()
+                if event.key == pg.K_g:
+                    self.try_interact_chest()
                 if event.key == pg.K_DELETE or event.key == pg.K_BACKSPACE:
                     self.player.clear_move_queue()
                 # Hold keys to queue moves (path preview); executes at speed
@@ -375,7 +380,9 @@ class Game:
             self.inv_selected = None
             return
         live_mobs = [m for m in self.all_mobs if getattr(m, 'state', None) != 'dead' and m.health > 0]
-        if not self.level_exit_open and len(live_mobs) == 0:
+        if intro_ops.is_intro_level(self):
+            intro_ops.refresh_intro_exit_open(self)
+        elif not self.level_exit_open and len(live_mobs) == 0:
             self.level_exit_open = True
         # Keep manual target valid
         if self.manual_target is not None:
@@ -444,6 +451,7 @@ class Game:
             rt_screen = self.camera.apply_rect(rt_rect)
             pg.draw.rect(self.screen, (40, 170, 170), rt_screen)
             pg.draw.rect(self.screen, WHITE, rt_screen, 2)
+        self._draw_world_chests()
         # Draw path preview: outlined tiles for queued moves
         path_tiles = self.player.get_path_tiles()
         path_rect = pg.Rect(0, 0, TILESIZE, TILESIZE)
@@ -518,6 +526,7 @@ class Game:
                         screen_rect = self.camera.apply_rect(path_rect)
                         overlay.fill(MOB_ATTACK_OVERLAY, screen_rect)
         self.screen.blit(overlay, (0, 0))
+        self._draw_shield_mob_trail()
         if self.chain_lightning_fx:
             cam = self.camera.camera
             for fx in self.chain_lightning_fx:
@@ -547,6 +556,7 @@ class Game:
                 ty = sy - txt.get_height() // 2
                 self.screen.blit(txt, (tx, ty))
         self.draw_hud()
+        self._draw_intro_tutorial_overlay()
         self.draw_hotbar()
         if self.inventory_open:
             self.draw_inventory()
@@ -939,6 +949,205 @@ class Game:
         last = lines[-1]
         self.screen.blit(last, (WIDTH - pad - last.get_width(), y))
 
+    def _draw_shield_mob_trail(self):
+        """Lichenward Strap: subtle animated green motes toward nearest living mob (shield equipped)."""
+        if self.player is None or not hasattr(self, 'camera'):
+            return
+        sid = self.inventory.equipment.get('shield')
+        if not sid or not ITEM_DEFS.get(sid, {}).get('shield_trail_nearest_mob'):
+            return
+        px, py = self.player.hit_rect.center
+        best = None
+        best_d = None
+        for m in self.all_mobs:
+            if getattr(m, 'state', None) == 'dead' or getattr(m, 'health', 0) <= 0:
+                continue
+            mx, my = m.hit_rect.center
+            d = (px - mx) ** 2 + (py - my) ** 2
+            if best_d is None or d < best_d:
+                best_d = d
+                best = m
+        if best is None:
+            return
+        cam = self.camera.camera
+        ax = (px - cam.x) * SCALE
+        ay = (py - cam.y) * SCALE
+        bx = (best.hit_rect.centerx - cam.x) * SCALE
+        by = (best.hit_rect.centery - cam.y) * SCALE
+        t = (pg.time.get_ticks() % 1800) / 1800.0
+        n = 12
+        for i in range(n):
+            u = ((i + 0.35) / n + t) % 1.0
+            x = int(ax + (bx - ax) * u)
+            y = int(ay + (by - ay) * u)
+            pulse = 0.28 + 0.42 * math.sin(u * math.pi)
+            rad = max(1, int(1 + 2 * pulse))
+            g = int(95 + 75 * pulse)
+            col = (int(38 + 40 * pulse), g, int(62 + 50 * pulse))
+            pg.draw.circle(self.screen, col, (x, y), rad)
+
+    def _wrap_ui_font_lines(self, font, text, max_px):
+        """Word-wrap to fit pixel width (for UI copy)."""
+        words = (text or '').split()
+        if not words:
+            return []
+        lines = []
+        cur = words[0]
+        for w in words[1:]:
+            trial = f"{cur} {w}"
+            if font.size(trial)[0] <= max_px:
+                cur = trial
+            else:
+                lines.append(cur)
+                cur = w
+        lines.append(cur)
+        return lines
+
+    def _set_map_tile(self, col, row, ch):
+        if row < 0 or row >= len(self.map.data):
+            return
+        s = self.map.data[row]
+        if col < 0 or col >= len(s):
+            return
+        lst = list(s)
+        lst[col] = ch
+        self.map.data[row] = ''.join(lst)
+
+    def _apply_opened_chests_to_map(self):
+        if not hasattr(self, 'map') or not getattr(self, 'opened_chests', None):
+            return
+        lv = self.current_level_name
+        for row in range(self.map.tileheight):
+            line = self.map.data[row]
+            for col, c in enumerate(line):
+                if c != 'C':
+                    continue
+                k = intro_ops.chest_storage_key(lv, col, row)
+                if k in self.opened_chests:
+                    self._set_map_tile(col, row, '.')
+
+    def try_interact_chest(self):
+        """Open adjacent (or standing on) chest tile."""
+        if not hasattr(self, 'map') or self.player is None:
+            return False
+        if self.player.move_state != 'idle' or self.player.slide_to_tile is not None:
+            return False
+        px, py = self.player.tile_x, self.player.tile_y
+        seen = set()
+        for cx, cy in ((px, py), (px + 1, py), (px - 1, py), (px, py + 1), (px, py - 1)):
+            if (cx, cy) in seen:
+                continue
+            seen.add((cx, cy))
+            if cy < 0 or cy >= len(self.map.data) or cx < 0 or cx >= len(self.map.data[cy]):
+                continue
+            if self.map.data[cy][cx] != 'C':
+                continue
+            k = intro_ops.chest_storage_key(self.current_level_name, cx, cy)
+            if k in self.opened_chests:
+                continue
+            self._open_chest_at(cx, cy)
+            return True
+        return False
+
+    def _open_chest_at(self, col, row):
+        entries = intro_ops.loot_entries_for_intro_chest(self, col, row)
+        if entries is None:
+            entries = []
+        leftover = 0
+        for item_id, n in entries:
+            leftover += self.inventory.add_item(item_id, int(n))
+        if leftover > 0:
+            return
+        k = intro_ops.chest_storage_key(self.current_level_name, col, row)
+        self.opened_chests.add(k)
+        self._set_map_tile(col, row, '.')
+        if intro_ops.is_intro_level(self) and (col, row) in intro_ops.STARTER_CHEST_TILES:
+            self.intro_exit_unlocked = True
+        for item_id, n in entries:
+            self.on_items_gained(item_id, int(n))
+        intro_ops.refresh_intro_exit_open(self)
+        self.save_inventory_state()
+
+    def _intro_tutorial_lines(self):
+        if not intro_ops.is_intro_level(self):
+            return []
+        sc = intro_ops.STARTER_CHEST_TILES
+        opened_starter = False
+        oc = getattr(self, 'opened_chests', set())
+        for sx, sy in sc:
+            if intro_ops.chest_storage_key(self.current_level_name, sx, sy) in oc:
+                opened_starter = True
+                break
+        if not opened_starter:
+            return [
+                'Movement: WASD or arrow keys queue one tile at a time; a yellow path shows your upcoming steps.',
+                'Lore: these vaults were built to train and bury legions — stone does not forget who passed.',
+                'Stand beside the supply chest and press G to open it. You start with nothing; your class kit waits inside.',
+            ]
+        live = sum(
+            1 for m in self.all_mobs
+            if getattr(m, 'state', None) != 'dead' and getattr(m, 'health', 0) > 0
+        )
+        if live > 0:
+            return [
+                'Press F with a hotbar slot selected (1–8) to drink potions or to equip and swap weapons, armor, and shield.',
+                'E / I: full inventory — drag items to equipment slots or onto the hotbar; F still acts on the highlighted slot.',
+                'Space: attack. The relics “choose” a foe: the closest enemy inside your weapon range becomes your target.',
+                'Watch the outline: green means in range, red means too far. Click a monster to pin it; click empty floor to hand targeting back to the vault’s instinct.',
+                'Lore: sentinels and straw targets alike were hung here so recruits would learn range before the real dark woke up.',
+                'Destroy the straw target; the forward seal stays shut until it falls.',
+            ]
+        return [
+            'Lore: the threshold you cross is only the outer lip of something hungrier — the dungeon deepens with every floor.',
+            'The way is open. Step into the purple exit when you are ready; greater gates and a true boss still lie ahead.',
+        ]
+
+    def _draw_world_chests(self):
+        if not hasattr(self, 'map'):
+            return
+        cam = self.camera.camera
+        path_rect = pg.Rect(0, 0, TILESIZE, TILESIZE)
+        for ty in range(self.map.tileheight):
+            row = self.map.data[ty]
+            for tx, ch in enumerate(row):
+                if ch != 'C':
+                    continue
+                path_rect.x = tx * TILESIZE
+                path_rect.y = ty * TILESIZE
+                scr = self.camera.apply_rect(path_rect)
+                if scr.width <= 0 or scr.height <= 0:
+                    continue
+                pg.draw.rect(self.screen, (95, 72, 38), scr)
+                pg.draw.rect(self.screen, (200, 165, 80), scr, 2)
+                ix = scr.centerx - 4
+                iy = scr.centery - 6
+                pg.draw.rect(self.screen, (40, 32, 22), (ix, iy, 8, 10))
+
+    def _draw_intro_tutorial_overlay(self):
+        lines = self._intro_tutorial_lines()
+        if not lines:
+            return
+        font = pg.font.Font(pg.font.match_font('arial'), 16)
+        pad = 12
+        max_w = min(WIDTH - 2 * HUD_PADDING, 820)
+        wrapped = []
+        for raw in lines:
+            wrapped.extend(self._wrap_ui_font_lines(font, raw, max_w - 2 * pad))
+        line_h = font.get_height() + 4
+        box_h = pad * 2 + len(wrapped) * line_h
+        box = pg.Surface((max_w, box_h), pg.SRCALPHA)
+        box.fill((12, 14, 22, 210))
+        pg.draw.rect(box, (130, 140, 170), box.get_rect(), 1)
+        y = pad
+        for ln in wrapped:
+            box.blit(font.render(ln, True, UI_TEXT_BRIGHT), (pad, y))
+            y += line_h
+        bx = (WIDTH - max_w) // 2
+        # Leave room for two-line hotbar hints below slots
+        by = HEIGHT - box_h - HUD_PADDING - (SLOT_SIZE + 4 + 2 * (font.get_height() + 5) + 12)
+        by = max(HUD_PADDING, by)
+        self.screen.blit(box, (bx, by))
+
     def _slot_bg_for_item(self, item_id):
         if not item_id or item_id not in ITEM_DEFS:
             return SLOT_BG
@@ -1047,15 +1256,25 @@ class Game:
         """Draw item bar at bottom center. Hotbar shows first HOTBAR_SLOTS slots; one is selected."""
         total_w = HOTBAR_SLOTS * SLOT_SIZE + (HOTBAR_SLOTS - 1) * SLOT_GAP
         start_x = (WIDTH - total_w) // 2
-        y = HEIGHT - SLOT_SIZE - HUD_PADDING
+        font = pg.font.Font(pg.font.match_font('arial'), 14)
+        hint_dy = font.get_height() + 5
+        y = HEIGHT - SLOT_SIZE - HUD_PADDING - hint_dy
         for i in range(HOTBAR_SLOTS):
             x = start_x + i * (SLOT_SIZE + SLOT_GAP)
             slot_data = self.inventory.get_hotbar_slot(i)
             self.draw_slot(x, y, slot_data, selected=(i == self.inventory.selected_hotbar_index))
-        font = pg.font.Font(pg.font.match_font('arial'), 14)
-        hint = font.render("1-8 select  F use / equip  E / I inventory", True, UI_TEXT_MUTED)
-        self.screen.blit(font.render("1-8 select  F use / equip  E / I inventory", True, (0, 0, 0)), (start_x + 1, y + SLOT_SIZE + 5))
-        self.screen.blit(hint, (start_x, y + SLOT_SIZE + 4))
+        hint_lines = (
+            '1–8 hotbar · Space attack · G chest · E/I inventory · click foe to pin target',
+            'F: use potions and equip or swap weapons / armor / shield (selected slot)',
+        )
+        hy = y + SLOT_SIZE + 4
+        for i, text in enumerate(hint_lines):
+            surf = font.render(text, True, UI_TEXT_MUTED)
+            hx = (WIDTH - surf.get_width()) // 2
+            shadow = font.render(text, True, (0, 0, 0))
+            yy = hy + i * hint_dy
+            self.screen.blit(shadow, (hx + 1, yy + 1))
+            self.screen.blit(surf, (hx, yy))
 
     def use_selected_item(self):
         """Equip gear from hotbar (weapon/armor/shield) or use consumables (e.g. potions)."""
@@ -1120,10 +1339,21 @@ class Game:
             True, UI_TEXT_BRIGHT)
         self.screen.blit(close_hint, (panel_x + 12, panel_y + panel_h - 22))
 
-        tab_char = pg.Rect(panel_x + 16, panel_y + 10, 126, 30)
-        tab_skills = pg.Rect(panel_x + 148, panel_y + 10, 126, 30)
-        tab_craft = pg.Rect(panel_x + 280, panel_y + 10, 126, 30)
-        tab_upgrade = pg.Rect(panel_x + 412, panel_y + 10, 134, 30)
+        tab_gap = 6
+        tab_specs = [
+            ('character', 'Character'),
+            ('skills', 'Skills'),
+            ('craft', 'Craft'),
+            ('upgrade', 'Upgrade'),
+            ('shop', 'Shop'),
+        ]
+        tab_row_inner_w = panel_w - 24
+        tab_w = (tab_row_inner_w - tab_gap * (len(tab_specs) - 1)) // max(1, len(tab_specs))
+        tx_tab = panel_x + 12
+        inv_tab_rects = {}
+        for tid, _lbl in tab_specs:
+            inv_tab_rects[tid] = pg.Rect(tx_tab, panel_y + 10, tab_w, 30)
+            tx_tab += tab_w + tab_gap
 
         content_top = panel_y + 54
         left_x = panel_x + 20
@@ -1440,7 +1670,90 @@ class Game:
                 self.screen.blit(
                     font_sm.render("Discover a recipe to see materials here.", True, UI_TEXT_DIM),
                     (mats_x, my))
-        else:
+        elif self.inventory_tab == 'shop':
+            shop_x = left_x
+            shop_margin_r = 16
+            shop_inner_w = max(200, min(inv_x - shop_x - shop_margin_r, panel_x + panel_w - shop_x - 24))
+            content_bottom = panel_y + panel_h - 52
+            shop_panel_top = content_top - 8
+            shop_panel_h = max(120, content_bottom - shop_panel_top)
+            shop_panel = pg.Rect(shop_x - 6, shop_panel_top, shop_inner_w + 12, shop_panel_h)
+            pg.draw.rect(self.screen, (36, 38, 48), shop_panel)
+            pg.draw.rect(self.screen, (92, 98, 120), shop_panel, 2)
+            self.screen.blit(font.render("Relic Broker", True, GOLD), (shop_x, content_top))
+            sy = content_top + 34
+            blurb = (
+                "Your catalogue (coins + level). NPC merchants will use a separate stock later."
+            )
+            for blurb_ln in self._wrap_ui_font_lines(font_sm, blurb, shop_inner_w - 4):
+                self.screen.blit(font_sm.render(blurb_ln, True, UI_TEXT_MUTED), (shop_x, sy))
+                sy += 18
+            sy += 6
+            coin_ct = self.inventory.count_item('gold_coin')
+            self.screen.blit(
+                font_sm.render(f"Coins carried: {coin_ct}", True, GOLD),
+                (shop_x, sy),
+            )
+            sy += 24
+            text_col_x = shop_x + SLOT_SIZE + 12
+            text_col_w = max(80, shop_inner_w - SLOT_SIZE - 20)
+            buy_w = min(max(text_col_w, 120), 260)
+            listings = list(player_shop_system.iter_player_shop_listings(self))
+            if not listings:
+                self.screen.blit(font_sm.render("No listings in player_shop.json.", True, UI_TEXT_DIM), (shop_x, sy))
+            truncated = False
+            for listing, st in listings:
+                item_id = listing['item_id']
+                idef = ITEM_DEFS.get(item_id, {})
+                row_top = sy
+                if row_top > content_bottom - 72:
+                    truncated = True
+                    break
+                ir = self.draw_slot(shop_x, row_top, (item_id, 1))
+                self.inv_slot_rects.append((ir, 'shop_item', item_id))
+                if ir.collidepoint(mouse_pos):
+                    hovered_item_id = item_id
+                tx = text_col_x
+                ny = row_top
+                name_s = font_md.render(idef.get('name', item_id), True, UI_TEXT_BRIGHT)
+                if name_s.get_width() > text_col_w:
+                    name_s = font_sm.render(idef.get('name', item_id), True, UI_TEXT_BRIGHT)
+                self.screen.blit(name_s, (tx, ny))
+                ny += name_s.get_height() + 4
+                desc_lines = self._wrap_ui_font_lines(font_sm, idef.get('description', ''), text_col_w)[:5]
+                for dl in desc_lines:
+                    self.screen.blit(font_sm.render(dl, True, UI_TEXT_MUTED), (tx, ny))
+                    ny += 18
+                ny += 4
+                price = listing['price_coins']
+                need_lv = listing['min_player_level']
+                meta_col = UI_TEXT_MUTED if st['locked_level'] else UI_TEXT_BRIGHT
+                self.screen.blit(
+                    font_sm.render(f"Lv.{need_lv}+  ·  {price} coins", True, meta_col),
+                    (tx, ny),
+                )
+                ny += 22
+                buy_r = pg.Rect(tx, ny, buy_w, 30)
+                can = st['can_buy']
+                bcol = (52, 110, 72) if can else (58, 58, 66)
+                pg.draw.rect(self.screen, bcol, buy_r)
+                pg.draw.rect(self.screen, GOLD if can else (85, 85, 95), buy_r, 2)
+                lbl = "Buy" if can else ("Owned" if st['owned'] else "Locked")
+                ls = font_sm.render(lbl, True, UI_TEXT_BRIGHT if can else UI_TEXT_DIM)
+                self.screen.blit(ls, (buy_r.x + max(6, (buy_r.width - ls.get_width()) // 2), buy_r.y + 7))
+                self.inv_slot_rects.append((buy_r, 'player_shop_buy', listing['id']))
+                ny = buy_r.bottom + 6
+                if not can and not st['owned']:
+                    for st_ln in self._wrap_ui_font_lines(font_tip, st['status'], text_col_w):
+                        self.screen.blit(font_tip.render(st_ln, True, (200, 140, 140)), (tx, ny))
+                        ny += 16
+                sy = max(ir.bottom, ny) + 16
+            if truncated:
+                self.screen.blit(
+                    font_tip.render("Resize the window or shrink UI if shop rows are clipped.", True, UI_TEXT_DIM),
+                    (shop_x, min(sy, content_bottom - 20)),
+                )
+        elif self.inventory_tab == 'upgrade':
             # Forge on the left — avoids overlapping the inventory column on the right.
             up_x = left_x
             up_panel_w = min(360, max(280, inv_x - up_x - 32))
@@ -1523,16 +1836,14 @@ class Game:
                         hovered_item_meta = dict(imeta) if imeta else {}
 
         tab_hit = []
-        for rect, tid, lbl in (
-            (tab_char, 'character', 'Character'),
-            (tab_skills, 'skills', 'Skills'),
-            (tab_craft, 'craft', 'Craft'),
-            (tab_upgrade, 'upgrade', 'Upgrade'),
-        ):
+        for tid, lbl in tab_specs:
+            rect = inv_tab_rects[tid]
             sel = self.inventory_tab == tid
             pg.draw.rect(self.screen, (48, 48, 48), rect)
             pg.draw.rect(self.screen, GOLD if sel else (100, 100, 100), rect, 2)
-            self.screen.blit(font_sm.render(lbl, True, GOLD if sel else WHITE), (rect.x + 14, rect.y + 6))
+            surf = font_sm.render(lbl, True, GOLD if sel else WHITE)
+            lx = rect.x + max(4, (rect.width - surf.get_width()) // 2)
+            self.screen.blit(surf, (lx, rect.y + 7))
             tab_hit.append((rect, 'tab', tid))
         self.inv_slot_rects = tab_hit + self.inv_slot_rects
 
@@ -1756,7 +2067,13 @@ class Game:
                         self.inventory.return_upgrade_staging()
                     self.inventory_tab = 'craft'
                     self._sync_discovered_recipes_from_inventory()
-                else:
+                elif index == 'shop':
+                    if self.inventory_tab == 'craft':
+                        self.inventory.return_craft_staging()
+                    if self.inventory_tab == 'upgrade':
+                        self.inventory.return_upgrade_staging()
+                    self.inventory_tab = 'shop'
+                elif index == 'upgrade':
                     if self.inventory_tab == 'craft':
                         self.inventory.return_craft_staging()
                     self.inventory_tab = 'upgrade'
@@ -1782,6 +2099,9 @@ class Game:
                 if try_finish_craft(self.inventory, self.craft_selected_recipe_id):
                     self._sync_discovered_recipes_from_inventory()
                     self.save_inventory_state()
+                return
+            if source == 'player_shop_buy':
+                player_shop_system.try_buy_player_listing(self, index)
                 return
             if source == 'upgrade_btn':
                 ok, _ = try_finish_infusion(self.inventory)

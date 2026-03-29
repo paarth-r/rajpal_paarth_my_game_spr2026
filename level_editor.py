@@ -52,6 +52,8 @@ TILE_PALETTE: list[tuple[str, str]] = [
     ("K", "Checkpoint"),
     ("N", "Exit"),
     ("R", "Return"),
+    ("C", "Chest (interact)"),
+    ("D", "Training dummy mob"),
     (" ", "Erase→floor"),  # writes '.' (space is only UI label)
 ]
 

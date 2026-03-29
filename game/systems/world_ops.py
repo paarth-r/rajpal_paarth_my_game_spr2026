@@ -7,6 +7,7 @@ import pygame as pg
 from settings import FLOOR_COLOR, MOB_HP, TILESIZE
 from utils import Map, Camera, tiles_on_grid_line
 from sprites import Wall, Mob, Player
+from game.systems import intro_ops
 
 vec = pg.math.Vector2
 
@@ -20,6 +21,7 @@ def load_data(self):
     self.active_save_path = path.join(self.saves_dir, 'active_world.txt')
     self.wall_img = pg.image.load(path.join(self.img_dir, 'wall_art.png')).convert_alpha()
     self.level_order = [
+        'intro.txt',
         'level1.txt',
         'level2.txt',
         'level3.txt',
@@ -34,6 +36,8 @@ def load_data(self):
     self.current_save_name = None
     self.save_path = None
     self.mob_states_by_level = {}
+    self.opened_chests = set()
+    self.intro_exit_unlocked = False
     self.init_save_system()
     self._load_world_state_from_save()
     self.load_level(self.current_level_name, create_player=True)
@@ -118,6 +122,8 @@ def load_level(self, level_name, create_player=False):
                 default_mob_spawns.append((col, row, 'shadow_assassin'))
             elif tile == 'G':
                 default_mob_spawns.append((col, row, 'ghost'))
+            elif tile == 'D':
+                default_mob_spawns.append((col, row, 'training_dummy'))
 
     if self.checkpoint_tile is None and player_spawn is not None:
         self.checkpoint_tile = player_spawn
@@ -162,6 +168,10 @@ def load_level(self, level_name, create_player=False):
             Mob(self, col, row, mob_type=mob_type)
 
     self.level_exit_open = len([m for m in self.all_mobs if getattr(m, 'state', None) != 'dead']) == 0
+    if intro_ops.is_intro_level(self):
+        intro_ops.refresh_intro_exit_open(self)
+    if hasattr(self, '_apply_opened_chests_to_map'):
+        self._apply_opened_chests_to_map()
     self.camera = Camera(self.map.width, self.map.height)
     self.manual_target = None
 
@@ -173,7 +183,8 @@ def _compute_reachable_tiles_from(self, start_col, start_row):
         return set()
     if not (0 <= start_col < w and 0 <= start_row < h):
         return set()
-    if self.map.data[start_row][start_col] == '1':
+    start_tile = self.map.data[start_row][start_col]
+    if start_tile == '1':
         return set()
     q = deque()
     q.append((start_col, start_row))
@@ -186,7 +197,8 @@ def _compute_reachable_tiles_from(self, start_col, start_row):
                 continue
             if (nc, nr) in seen:
                 continue
-            if self.map.data[nr][nc] == '1':
+            t = self.map.data[nr][nc]
+            if t == '1':
                 continue
             seen.add((nc, nr))
             q.append((nc, nr))
