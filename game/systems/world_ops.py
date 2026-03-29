@@ -19,7 +19,17 @@ def load_data(self):
     self.saves_dir = path.join(self.game_dir, 'saves')
     self.active_save_path = path.join(self.saves_dir, 'active_world.txt')
     self.wall_img = pg.image.load(path.join(self.img_dir, 'wall_art.png')).convert_alpha()
-    self.level_order = ['level1.txt', 'level2.txt', 'level3.txt', 'level4.txt', 'level5.txt']
+    self.level_order = [
+        'level1.txt',
+        'level2.txt',
+        'level3.txt',
+        'level4.txt',
+        'level5.txt',
+        'level6.txt',
+        'level7.txt',
+        'level8.txt',
+        'level9.txt',
+    ]
     self.current_level_name = self.level_order[0]
     self.current_save_name = None
     self.save_path = None
@@ -106,6 +116,8 @@ def load_level(self, level_name, create_player=False):
                 default_mob_spawns.append((col, row))
             elif tile == 'A':
                 default_mob_spawns.append((col, row, 'shadow_assassin'))
+            elif tile == 'G':
+                default_mob_spawns.append((col, row, 'ghost'))
 
     if self.checkpoint_tile is None and player_spawn is not None:
         self.checkpoint_tile = player_spawn

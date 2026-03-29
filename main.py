@@ -5,6 +5,8 @@ Main file responsible for game loop including input, update, and draw methods.
 
 
 import pygame as pg
+import random
+import subprocess
 import sys
 import json
 import os
@@ -61,7 +63,17 @@ class Game:
         self.saves_dir = path.join(self.game_dir, 'saves')
         self.active_save_path = path.join(self.saves_dir, 'active_world.txt')
         self.wall_img = pg.image.load(path.join(self.img_dir, 'wall_art.png')).convert_alpha()
-        self.level_order = ['level1.txt', 'level2.txt', 'level3.txt', 'level4.txt', 'level5.txt']
+        self.level_order = [
+            'level1.txt',
+            'level2.txt',
+            'level3.txt',
+            'level4.txt',
+            'level5.txt',
+            'level6.txt',
+            'level7.txt',
+            'level8.txt',
+            'level9.txt',
+        ]
         self.current_level_name = self.level_order[0]
         self.current_save_name = None
         self.save_path = None
@@ -195,6 +207,14 @@ class Game:
                         self.class_picker_selected_id = DEFAULT_CLASS_ID
                     if event.key == pg.K_s:
                         self.save_picker_open = not self.save_picker_open
+                    if (
+                        event.key == pg.K_l
+                        and not self.save_picker_open
+                        and not self.class_picker_for_new_world
+                    ):
+                        editor = path.join(self.game_dir, "level_editor.py")
+                        if path.isfile(editor):
+                            subprocess.Popen([sys.executable, editor], cwd=self.game_dir)
                     continue
                 if self.state == 'death':
                     continue
@@ -675,7 +695,11 @@ class Game:
             surf = font_btn.render(text, True, WHITE)
             self.screen.blit(surf, surf.get_rect(center=rect.center))
 
-        hint = font_hint.render("Enter=Continue, N=New class+world, S=Choose Save", True, GOLD)
+        hint = font_hint.render(
+            "Enter=Continue, N=New class+world, S=Choose Save, L=Level editor (separate window)",
+            True,
+            GOLD,
+        )
         self.screen.blit(hint, hint.get_rect(center=(WIDTH // 2, panel_y + panel_h - 26)))
 
         if self.save_picker_open:
@@ -935,17 +959,20 @@ class Game:
             slot_data = self.inventory.get_hotbar_slot(i)
             self.draw_slot(x, y, slot_data, selected=(i == self.inventory.selected_hotbar_index))
         font = pg.font.Font(pg.font.match_font('arial'), 14)
-        hint = font.render("1-8 select  F use item  E / I inventory", True, UI_TEXT_MUTED)
-        self.screen.blit(font.render("1-8 select  F use item  E / I inventory", True, (0, 0, 0)), (start_x + 1, y + SLOT_SIZE + 5))
+        hint = font.render("1-8 select  F use / equip  E / I inventory", True, UI_TEXT_MUTED)
+        self.screen.blit(font.render("1-8 select  F use / equip  E / I inventory", True, (0, 0, 0)), (start_x + 1, y + SLOT_SIZE + 5))
         self.screen.blit(hint, (start_x, y + SLOT_SIZE + 4))
 
     def use_selected_item(self):
-        """Use currently selected hotbar item (e.g. health potion)."""
+        """Equip gear from hotbar (weapon/armor/shield) or use consumables (e.g. potions)."""
         idx = self.inventory.selected_hotbar_index
         slot_data = self.inventory.get_hotbar_slot(idx)
         if slot_data is None:
             return False
-        item_id, _ = slot_data
+        if self.inventory.equip_from_hotbar(idx):
+            self.save_inventory_state()
+            return True
+        item_id, _count, _meta = unpack_slot(slot_data)
         item_def = ITEM_DEFS.get(item_id, {})
         if item_def.get('type') != 'consumable':
             return False
@@ -1319,10 +1346,11 @@ class Game:
                     font_sm.render("Discover a recipe to see materials here.", True, UI_TEXT_DIM),
                     (mats_x, my))
         else:
-            up_x = recipe_col_x + recipe_col_w + 20
-            up_panel_w = max(320, inv_x - up_x - 20)
-            guide_panel = pg.Rect(up_x - 8, content_top - 8, up_panel_w + 16, 86)
-            forge_panel = pg.Rect(up_x - 8, content_top + 88, up_panel_w + 16, 260)
+            # Forge on the left — avoids overlapping the inventory column on the right.
+            up_x = left_x
+            up_panel_w = min(360, max(280, inv_x - up_x - 32))
+            guide_panel = pg.Rect(up_x - 4, content_top - 8, up_panel_w + 8, 86)
+            forge_panel = pg.Rect(up_x - 4, content_top + 88, up_panel_w + 8, 268)
             pg.draw.rect(self.screen, (36, 38, 48), guide_panel)
             pg.draw.rect(self.screen, (92, 98, 120), guide_panel, 2)
             pg.draw.rect(self.screen, (36, 38, 48), forge_panel)
@@ -1579,8 +1607,13 @@ class Game:
         return True
 
     def _inv_hit_test(self, pos):
-        """Return (source, index) for the slot under pos, or None."""
-        for rect, source, index in self.inv_slot_rects:
+        """Return (source, index) for the slot under pos, or None.
+
+        Later entries win so the inventory grid (registered after the upgrade panel)
+        takes precedence over any accidental overlap; tabs stay first in the list and
+        are still found when not covered by other rects.
+        """
+        for rect, source, index in reversed(self.inv_slot_rects):
             if rect.collidepoint(pos):
                 return (source, index)
         return None
@@ -1801,12 +1834,34 @@ class Game:
                 self.save_inventory_state()
                 self.inv_dragging = None
                 return
+            if drag_src == 'hotbar' and drop_src == 'upgrade_weapon':
+                idef = ITEM_DEFS.get(drag_item, {})
+                if idef.get('type') != 'weapon':
+                    return
+                hb = self.inventory.get_hotbar_slot(drag_idx)
+                if not hb:
+                    return
+                hi, hc, hm = unpack_slot(hb)
+                if hi != drag_item or hc < 1:
+                    return
+                if hc <= 1:
+                    self.inventory.set_hotbar_slot(drag_idx, None, 0)
+                else:
+                    self.inventory.set_hotbar_slot(drag_idx, hi, hc - 1, meta=hm if hm else None)
+                old = self.inventory._upgrade_weapon_item_id
+                if old:
+                    self.inventory.add_item(old, 1)
+                self.inventory._upgrade_weapon_item_id = drag_item
+                self.save_inventory_state()
+                self.inv_dragging = None
+                return
             if drag_src == 'equip' and drag_idx == 'weapon' and drop_src == 'upgrade_weapon':
                 old = self.inventory._upgrade_weapon_item_id
                 if old:
                     self.inventory.add_item(old, 1)
                 self.inventory._upgrade_weapon_item_id = drag_item
                 self.inventory.equipment['weapon'] = None
+                self.inventory.equipment_meta.pop('weapon', None)
                 self.save_inventory_state()
                 self.inv_dragging = None
                 return
@@ -1823,10 +1878,42 @@ class Game:
                 self.save_inventory_state()
                 self.inv_dragging = None
                 return
+            if drag_src == 'hotbar' and drop_src == 'upgrade_rune':
+                idef = ITEM_DEFS.get(drag_item, {})
+                if idef.get('type') != 'rune':
+                    return
+                hb = self.inventory.get_hotbar_slot(drag_idx)
+                if not hb:
+                    return
+                hi, hc, hm = unpack_slot(hb)
+                if hi != drag_item or hc < 1:
+                    return
+                if hc <= 1:
+                    self.inventory.set_hotbar_slot(drag_idx, None, 0)
+                else:
+                    self.inventory.set_hotbar_slot(drag_idx, hi, hc - 1, meta=hm if hm else None)
+                old = self.inventory._upgrade_rune_item_id
+                if old:
+                    self.inventory.add_item(old, 1)
+                self.inventory._upgrade_rune_item_id = drag_item
+                self.save_inventory_state()
+                self.inv_dragging = None
+                return
             if drag_src == 'upgrade_weapon' and drop_src == 'inv':
                 drop_data = self.inventory.get_slot(drop_idx)
                 if drop_data is None:
-                    self.inventory.set_slot(drop_idx, drag_item, 1)
+                    self.inventory.set_slot(drop_idx, drag_item, 1, meta=drag_meta if drag_meta else None)
+                    self.inventory._upgrade_weapon_item_id = None
+                    self.save_inventory_state()
+                    self.inv_dragging = None
+                    return
+                return
+            if drag_src == 'upgrade_weapon' and drop_src == 'hotbar':
+                hb = self.inventory.get_hotbar_slot(drop_idx)
+                if hb is None:
+                    self.inventory.set_hotbar_slot(
+                        drop_idx, drag_item, 1, meta=drag_meta if drag_meta else None,
+                    )
                     self.inventory._upgrade_weapon_item_id = None
                     self.save_inventory_state()
                     self.inv_dragging = None
@@ -1835,16 +1922,36 @@ class Game:
             if drag_src == 'upgrade_rune' and drop_src == 'inv':
                 drop_data = self.inventory.get_slot(drop_idx)
                 if drop_data is None:
-                    self.inventory.set_slot(drop_idx, drag_item, 1)
+                    self.inventory.set_slot(drop_idx, drag_item, 1, meta=drag_meta if drag_meta else None)
                     self.inventory._upgrade_rune_item_id = None
                     self.save_inventory_state()
                     self.inv_dragging = None
                     return
-                di, dc = drop_data
+                di, dc, dm = unpack_slot(drop_data)
                 idef = ITEM_DEFS.get(di, {})
                 mx = idef.get('max_stack', 99)
                 if di == drag_item and idef.get('stackable', True) and dc < mx:
-                    self.inventory.set_slot(drop_idx, di, dc + 1)
+                    self.inventory.set_slot(drop_idx, di, dc + 1, meta=dm if dm else None)
+                    self.inventory._upgrade_rune_item_id = None
+                    self.save_inventory_state()
+                    self.inv_dragging = None
+                    return
+                return
+            if drag_src == 'upgrade_rune' and drop_src == 'hotbar':
+                hb = self.inventory.get_hotbar_slot(drop_idx)
+                if hb is None:
+                    self.inventory.set_hotbar_slot(
+                        drop_idx, drag_item, 1, meta=drag_meta if drag_meta else None,
+                    )
+                    self.inventory._upgrade_rune_item_id = None
+                    self.save_inventory_state()
+                    self.inv_dragging = None
+                    return
+                hi, hc, hm = unpack_slot(hb)
+                idef = ITEM_DEFS.get(hi, {})
+                mx = idef.get('max_stack', 99)
+                if hi == drag_item and idef.get('stackable', True) and hc < mx:
+                    self.inventory.set_hotbar_slot(drop_idx, hi, hc + 1, meta=hm if hm else None)
                     self.inventory._upgrade_rune_item_id = None
                     self.save_inventory_state()
                     self.inv_dragging = None
@@ -1854,6 +1961,10 @@ class Game:
                 if self.inventory.equipment.get('weapon') is not None:
                     return
                 self.inventory.equipment['weapon'] = drag_item
+                if drag_meta:
+                    self.inventory.equipment_meta['weapon'] = dict(drag_meta)
+                else:
+                    self.inventory.equipment_meta.pop('weapon', None)
                 self.inventory._upgrade_weapon_item_id = None
                 self.save_inventory_state()
                 self.inv_dragging = None
@@ -2128,6 +2239,20 @@ class Game:
             )
         elif kind == 'chain_damage':
             self._apply_jupiter_chain_damage(primary_mob, damage_dealt, eff)
+        elif kind == 'lifesteal_on_hit':
+            ch = float(eff.get('chance', 1.0))
+            if random.random() < max(0.0, min(1.0, ch)):
+                frac = float(eff.get('damage_fraction', 0.15))
+                heal = max(1, int(damage_dealt * max(0.0, frac)))
+                eff_max = self.player.get_effective_max_health()
+                old_hp = self.player.health
+                self.player.health = min(eff_max, old_hp + heal)
+                if self.player.health > old_hp:
+                    self.add_damage_number(
+                        self.player.hit_rect.center,
+                        self.player.health - old_hp,
+                        color=(120, 220, 160),
+                    )
 
     def add_chain_lightning(self, world_a, world_b):
         self.chain_lightning_fx.append({

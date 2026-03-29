@@ -131,9 +131,11 @@ def try_finish_infusion(inventory):
         return False, "Not enough gold coins."
     rune_id = inventory._upgrade_rune_item_id
     forged_meta = {'infused_rune': rune_id} if rune_id else None
-    if inventory.add_item(out_id, 1, slot_meta=forged_meta) > 0:
+    leftover = inventory.add_item(out_id, 1, slot_meta=forged_meta)
+    if leftover > 0:
+        # Refund coins; weapon/rune were never removed from forge slots (still staged).
         inventory.add_item('gold_coin', coin_cost)
-        return False, "Inventory full."
+        return False, "Inventory full — make space, then try again."
     inventory._upgrade_weapon_item_id = None
     inventory._upgrade_rune_item_id = None
     return True, ""

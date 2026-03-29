@@ -1,0 +1,11 @@
+{
+  "world_id": "mp_test_world",
+  "players": [
+    {
+      "id": "p_ed14fd46",
+      "name": "A",
+      "tile_x": 2,
+      "tile_y": 2
+    }
+  ]
+}

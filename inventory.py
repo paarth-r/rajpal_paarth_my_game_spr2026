@@ -160,33 +160,65 @@ class Inventory:
             self.slots[index] = pack_slot(item_id, count, meta)
 
     def add_item(self, item_id, count=1, slot_meta=None):
-        """Add items; return leftover that didn't fit. slot_meta applies only when count==1 and a new slot is used."""
+        """Add items; return leftover that didn't fit.
+
+        Merges into existing stacks in hotbar or bag when item_id, stackable, and meta match.
+        New stacks use empty hotbar slots first, then bag. slot_meta applies only for a single-item
+        placement (count==1) into a new slot.
+        """
         if item_id not in ITEM_DEFS or count <= 0:
             return count
         item_def = ITEM_DEFS[item_id]
         max_stack = item_def.get('max_stack', 99)
         stackable = item_def.get('stackable', True)
         attach_meta = slot_meta if (count == 1 and isinstance(slot_meta, dict) and slot_meta) else None
-        for i in range(self.num_slots):
-            if count <= 0:
+        incoming_meta = dict(attach_meta) if attach_meta else {}
+
+        remaining = count
+
+        def try_merge_into(collection):
+            nonlocal remaining
+            for i in range(len(collection)):
+                if remaining <= 0:
+                    break
+                existing = collection[i]
+                if existing is None:
+                    continue
+                eid, current, em = unpack_slot(existing)
+                if eid != item_id or not stackable:
+                    continue
+                if (em or {}) != incoming_meta:
+                    continue
+                room = max_stack - current
+                if room <= 0:
+                    continue
+                add = min(remaining, room)
+                meta_out = em if em else None
+                collection[i] = pack_slot(item_id, current + add, meta_out)
+                remaining -= add
+
+        # 1) Stack onto existing piles (hotbar first, then bag)
+        try_merge_into(self.hotbar)
+        try_merge_into(self.slots)
+
+        # 2) New stacks: prefer empty hotbar, then bag
+        for collection in (self.hotbar, self.slots):
+            if remaining <= 0:
                 break
-            existing = self.slots[i]
-            if existing is not None and existing[0] == item_id and stackable:
-                current = unpack_slot(existing)[1]
-                add = min(count, max_stack - current)
-                if add > 0:
-                    self.slots[i] = pack_slot(item_id, current + add)
-                    count -= add
-        for i in range(self.num_slots):
-            if count <= 0:
-                break
-            if self.slots[i] is None:
-                add = min(count, max_stack)
-                use_meta = attach_meta if (add == count == 1) else None
-                self.slots[i] = pack_slot(item_id, add, use_meta)
-                count -= add
-                attach_meta = None
-        return count
+            limit = self.hotbar_size if collection is self.hotbar else self.num_slots
+            for i in range(limit):
+                if remaining <= 0:
+                    break
+                if collection[i] is not None:
+                    continue
+                add = min(remaining, max_stack)
+                use_meta = attach_meta if (add == 1 and remaining == 1 and attach_meta) else None
+                collection[i] = pack_slot(item_id, add, use_meta)
+                remaining -= add
+                if use_meta:
+                    attach_meta = None
+
+        return remaining
 
     def remove_item(self, slot_index, amount=1):
         s = self.get_slot(slot_index)
@@ -212,7 +244,7 @@ class Inventory:
             s = self.slots[i]
             if s is None or s[0] != item_id:
                 continue
-            _, c = s
+            _iid, c, _m = unpack_slot(s)
             take = min(remaining, c)
             if take > 0:
                 self.remove_item(i, take)

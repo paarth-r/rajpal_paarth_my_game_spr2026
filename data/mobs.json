@@ -180,5 +180,88 @@
                 "chance": 0.01
             }
         ]
+    },
+    "ghost": {
+        "name": "Spectral Stalker",
+        "spritesheet": "Ghost.png",
+        "frame_w": 32,
+        "frame_h": 32,
+        "idle_frames": 10,
+        "walk_frames": 10,
+        "attack_frames": 10,
+        "death_frames": 10,
+        "hp": 230,
+        "damage": 48,
+        "speed": 16,
+        "chase_range_tiles": 9,
+        "activation_range_tiles": 7,
+        "attack_cooldown_ms": 1550,
+        "attack_range_tiles": 1.15,
+        "xp": 78,
+        "move_delay_ms": 280,
+        "slide_duration_ms": 165,
+        "attack_anim_speed_ms": 90,
+        "anim_speed_ms": 90,
+        "hit_frame": 3,
+        "idle_row": 0,
+        "walk_row": 2,
+        "heal_row": 1,
+        "heal_frames": 10,
+        "attack_row": 3,
+        "death_row": 4,
+        "heal_once_amount": 65,
+        "heal_threshold_pct": 0.42,
+        "soul_steal_chance": 0.38,
+        "soul_steal_fraction": 0.32,
+        "drops": [
+            {
+                "item_id": "gold_coin",
+                "count": [
+                    3,
+                    8
+                ],
+                "chance": 0.92
+            },
+            {
+                "item_id": "health_potion",
+                "count": [
+                    1,
+                    2
+                ],
+                "chance": 0.55
+            },
+            {
+                "item_id": "soul_stealer",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.065
+            },
+            {
+                "item_id": "ember_rune",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.022
+            },
+            {
+                "item_id": "frost_rune",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.018
+            },
+            {
+                "item_id": "storm_rune",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.014
+            }
+        ]
     }
 }

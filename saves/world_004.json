@@ -1,0 +1,147 @@
+{
+  "slots": [
+    [
+      "gold_coin",
+      99
+    ],
+    [
+      "string",
+      4
+    ],
+    [
+      "storm_rune",
+      3
+    ],
+    null,
+    [
+      "assassin_blade_shard",
+      9
+    ],
+    null,
+    null,
+    null,
+    [
+      "leather_strip",
+      2
+    ],
+    null,
+    [
+      "ember_rune",
+      2
+    ],
+    null,
+    [
+      "assassin_handle_wrap",
+      14
+    ],
+    null,
+    null,
+    null,
+    [
+      "cobweb",
+      49
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+      "iron_scrap",
+      9
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+      "stone_chip",
+      22
+    ],
+    [
+      "legion_helm",
+      1
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "hotbar": [
+    [
+      "gold_coin",
+      99
+    ],
+    [
+      "health_potion",
+      10
+    ],
+    [
+      "health_potion",
+      5
+    ],
+    [
+      "aug_assassins_grace",
+      1,
+      {
+        "infused_rune": "storm_rune"
+      }
+    ],
+    [
+      "gold_coin",
+      23
+    ],
+    null,
+    null,
+    null
+  ],
+  "equipment": {
+    "weapon": "aug_soul_stealer",
+    "head": "galea",
+    "chest": "legion_cuirass",
+    "boots": "caligae",
+    "shield": null
+  },
+  "equipment_meta": {
+    "weapon": {
+      "infused_rune": "frost_rune"
+    }
+  },
+  "selected_hotbar_index": 2,
+  "player_health": 225,
+  "current_level": "level7.txt",
+  "mob_states": {
+    "level1.txt": [],
+    "level2.txt": [],
+    "level3.txt": [],
+    "level4.txt": [],
+    "level5.txt": [],
+    "level6.txt": [],
+    "level7.txt": []
+  },
+  "discovered_recipes": [
+    "assassin_shortbow",
+    "assassins_grace",
+    "woven_cobweb"
+  ],
+  "player_class_id": "assassin",
+  "player_level": 15,
+  "player_xp": 265,
+  "skill_points": 7,
+  "purchased_skill_nodes": [
+    "ass_blade",
+    "ass_dancer",
+    "ass_execution",
+    "ass_lethal",
+    "ass_shadow",
+    "ass_survivor",
+    "ass_veil"
+  ]
+}

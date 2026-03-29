@@ -421,6 +421,60 @@
         "augment_output": "aug_assassins_grace",
         "augment_coin_cost": 30
     },
+    "soul_stealer": {
+        "name": "Soul Stealer",
+        "type": "weapon",
+        "weapon_type": "dagger",
+        "rarity": "epic",
+        "slot": "weapon",
+        "color": [
+            160,
+            200,
+            255
+        ],
+        "sprite": "assassinsgrace.png",
+        "stackable": false,
+        "max_stack": 1,
+        "description": "A ghost-forged twin to the Grace. Faster, keener, and hungry—sometimes returns a bite of the damage you deal.",
+        "attack_range_tiles": 3,
+        "base_damage": 27,
+        "scaling_stat": "dexterity",
+        "scaling_factor": 0.48,
+        "attack_speed_bonus": -200,
+        "on_hit_effect": {
+            "kind": "lifesteal_on_hit",
+            "chance": 0.35,
+            "damage_fraction": 0.14
+        },
+        "salvage": [
+            {
+                "item_id": "assassin_blade_shard",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.4
+            },
+            {
+                "item_id": "assassin_handle_wrap",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.4
+            },
+            {
+                "item_id": "iron_scrap",
+                "count": [
+                    2,
+                    4
+                ],
+                "chance": 0.55
+            }
+        ],
+        "augment_output": "aug_soul_stealer",
+        "augment_coin_cost": 40
+    },
     "assassin_shortbow": {
         "name": "Assassin's Shortbow",
         "type": "weapon",
@@ -1024,6 +1078,88 @@
                 "count": [
                     1,
                     2
+                ],
+                "chance": 0.5
+            }
+        ],
+        "rune_blessings": {
+            "ember_rune": {
+                "patron": "Vulcan",
+                "summary": "Vulcan's forge: lingering fire damage over time.",
+                "on_hit_effect": {
+                    "kind": "burn_on_hit",
+                    "duration_ms": 4000,
+                    "tick_interval_ms": 500,
+                    "damage_per_tick": 4
+                }
+            },
+            "frost_rune": {
+                "patron": "Neptune",
+                "summary": "Neptune's chill: slows the enemy's movement.",
+                "on_hit_effect": {
+                    "kind": "slow_on_hit",
+                    "duration_ms": 2800,
+                    "move_mult": 0.52
+                }
+            },
+            "storm_rune": {
+                "patron": "Jupiter",
+                "summary": "Jupiter's bolt: lightning arcs to another foe nearby.",
+                "on_hit_effect": {
+                    "kind": "chain_damage",
+                    "radius_tiles": 2.5,
+                    "damage_fraction": 0.38
+                }
+            }
+        }
+    },
+    "aug_soul_stealer": {
+        "name": "Augmented Soul Stealer",
+        "type": "weapon",
+        "weapon_type": "dagger",
+        "rarity": "legendary",
+        "slot": "weapon",
+        "color": [
+            180,
+            210,
+            255
+        ],
+        "sprite": "assassinsgrace.png",
+        "stackable": false,
+        "max_stack": 1,
+        "description": "Tempered with divine essence. Keeps the blade's soul hunger; blessing adds a god's wrath.",
+        "attack_range_tiles": 3,
+        "base_damage": 30,
+        "scaling_stat": "dexterity",
+        "scaling_factor": 0.5,
+        "attack_speed_bonus": -195,
+        "on_hit_effect": {
+            "kind": "lifesteal_on_hit",
+            "chance": 0.38,
+            "damage_fraction": 0.16
+        },
+        "salvage": [
+            {
+                "item_id": "assassin_blade_shard",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.38
+            },
+            {
+                "item_id": "assassin_handle_wrap",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.38
+            },
+            {
+                "item_id": "iron_scrap",
+                "count": [
+                    2,
+                    5
                 ],
                 "chance": 0.5
             }

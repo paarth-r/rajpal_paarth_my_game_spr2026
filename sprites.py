@@ -375,6 +375,8 @@ class Mob(Sprite):
         self.heal_once_amount = d.get('heal_once_amount', 0)
         self.heal_threshold_pct = float(d.get('heal_threshold_pct', 0.5))
         self.heal_used = False
+        self.mob_soul_steal_chance = float(d.get('soul_steal_chance', 0))
+        self.mob_soul_steal_fraction = float(d.get('soul_steal_fraction', 0.3))
 
         w = d.get('frame_w', MOB_FRAME_W)
         h = d.get('frame_h', MOB_FRAME_H)
@@ -674,7 +676,19 @@ class Mob(Sprite):
                 # Frame 3 of the attack (index 3) is the actual hit
                 if self.anim_frame == self.mob_hit_frame and not self.attack_damage_dealt:
                     if in_attack_range and has_los:
-                        player.hurt(self.mob_damage)
+                        dmg = self.mob_damage
+                        player.hurt(dmg)
+                        if (
+                            self.mob_soul_steal_chance > 0
+                            and self.state != 'dead'
+                            and random.random() < self.mob_soul_steal_chance
+                        ):
+                            steal = max(1, int(dmg * max(0.0, self.mob_soul_steal_fraction)))
+                            self.health = min(self.max_health, self.health + steal)
+                            if hasattr(self.game, 'add_damage_number'):
+                                self.game.add_damage_number(
+                                    self.hit_rect.center, steal, color=(190, 140, 255)
+                                )
                     self.attack_damage_dealt = True
                 if self.anim_frame >= len(self.attack_frames):
                     self.state = 'idle'
