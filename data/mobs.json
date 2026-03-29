@@ -48,7 +48,7 @@
                     1,
                     1
                 ],
-                "chance": 0.15
+                "chance": 0.32
             },
             {
                 "item_id": "cobweb",
@@ -120,7 +120,7 @@
         "heal_frames": 10,
         "attack_row": 3,
         "death_row": 4,
-        "heal_once_amount": 50,
+        "heal_once_amount": 25,
         "heal_threshold_pct": 0.45,
         "drops": [
             {
@@ -209,7 +209,7 @@
         "heal_frames": 10,
         "attack_row": 3,
         "death_row": 4,
-        "heal_once_amount": 65,
+        "heal_once_amount": 50,
         "heal_threshold_pct": 0.42,
         "soul_steal_chance": 0.38,
         "soul_steal_fraction": 0.32,
@@ -226,9 +226,17 @@
                 "item_id": "health_potion",
                 "count": [
                     1,
-                    2
+                    1
                 ],
-                "chance": 0.55
+                "chance": 0.35
+            },
+            {
+                "item_id": "health_potion_large",
+                "count": [
+                    1,
+                    1
+                ],
+                "chance": 0.28
             },
             {
                 "item_id": "soul_stealer",

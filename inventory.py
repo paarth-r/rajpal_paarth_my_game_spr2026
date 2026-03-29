@@ -124,6 +124,20 @@ class Inventory:
         self.remove_item(slot_index, 1)
         return True
 
+    def try_salvage_hotbar_slot(self, hotbar_index):
+        """Shift+right-click: destroy one weapon in a hotbar slot, yield salvage."""
+        s = self.get_hotbar_slot(hotbar_index)
+        if s is None:
+            return False
+        item_id, cnt, hmeta = unpack_slot(s)
+        if not self.apply_salvage_from_weapon(item_id):
+            return False
+        if cnt <= 1:
+            self.hotbar[hotbar_index] = None
+        else:
+            self.hotbar[hotbar_index] = pack_slot(item_id, cnt - 1, hmeta if hmeta else None)
+        return True
+
     def try_salvage_equipped_weapon(self):
         """Salvage the equipped weapon (unequips it)."""
         w = self.equipment.get('weapon')

@@ -27,7 +27,7 @@ from crafting import (
     try_finish_craft,
     try_finish_infusion,
 )
-from inventory import Inventory, ITEM_DEFS, EQUIPMENT_SLOTS, unpack_slot, weapon_cooldown_ms_for_item
+from inventory import Inventory, ITEM_DEFS, EQUIPMENT_SLOTS, pack_slot, unpack_slot, weapon_cooldown_ms_for_item
 from weapons import format_on_hit_effect_tooltip, resolve_on_hit_effect
 from progression import (
     CLASS_DEFS,
@@ -870,15 +870,78 @@ class Game:
             status = f"{remaining} ms"
         status_surf = font.render(status, True, GOLD if remaining <= 0 else WHITE)
         self.screen.blit(status_surf, (x + HUD_ATTACK_BAR_W + 8, y - 2))
+        self._draw_top_right_dungeon_panel()
+
+    def _live_mob_count(self):
+        """Mobs that still block the exit (same notion as level_exit_open)."""
+        return sum(
+            1
+            for m in self.all_mobs
+            if getattr(m, 'state', None) != 'dead' and getattr(m, 'health', 0) > 0
+        )
+
+    def _dungeon_floor_index(self):
+        """1-based floor index and total, or (None, None) if level not in order."""
+        try:
+            idx = self.level_order.index(self.current_level_name)
+            return idx + 1, len(self.level_order)
+        except ValueError:
+            return None, None
+
+    def _draw_top_right_dungeon_panel(self):
+        """Top-right: save/world label, dungeon floor, minimap with player, live mob count."""
+        if not hasattr(self, 'map') or self.player is None:
+            return
+        pad = HUD_PADDING
+        font = pg.font.Font(pg.font.match_font('arial'), HUD_FONT_SIZE)
+        small = pg.font.Font(pg.font.match_font('arial'), 16)
+        lines = []
+        if self.current_save_name:
+            stem = self.current_save_name.replace('.json', '')
+            lines.append(small.render(f"World: {stem}", True, UI_TEXT_MUTED))
+        floor_n, floor_total = self._dungeon_floor_index()
+        if floor_n is not None:
+            lines.append(font.render(f"Dungeon {floor_n} / {floor_total}", True, UI_TEXT_BRIGHT))
+        else:
+            lines.append(font.render(self.current_level_name.replace('.txt', ''), True, UI_TEXT_BRIGHT))
+        n_mobs = self._live_mob_count()
+        lines.append(font.render(f"Mobs left: {n_mobs}", True, WHITE))
+
+        tw, th = self.map.tilewidth, self.map.tileheight
+        max_tiles = max(tw, th, 1)
+        cell = max(1, DUNGEON_PANEL_MINIMAP_MAX_PX // max_tiles)
+        mw, mh = tw * cell, th * cell
+        mini = pg.Surface((mw, mh))
+        mini.fill(DUNGEON_PANEL_MINIMAP_FLOOR)
+        for r in range(th):
+            for c in range(tw):
+                if self.map.data[r][c] == '1':
+                    mini.fill(DUNGEON_PANEL_MINIMAP_WALL, (c * cell, r * cell, cell, cell))
+        px, py = self.player.tile_x, self.player.tile_y
+        if 0 <= px < tw and 0 <= py < th:
+            cx = px * cell + cell // 2
+            cy = py * cell + cell // 2
+            rad = max(2, min(cell // 2, 5))
+            pg.draw.circle(mini, DUNGEON_PANEL_MINIMAP_PLAYER, (cx, cy), rad)
+            pg.draw.circle(mini, BLACK, (cx, cy), rad, 1)
+
+        text_w = max((s.get_width() for s in lines), default=0)
+        panel_w = max(text_w, mw)
+        y = pad
+        x0 = WIDTH - pad - panel_w
+        for s in lines[:-1]:
+            self.screen.blit(s, (WIDTH - pad - s.get_width(), y))
+            y += s.get_height() + 4
+        mx = x0 + (panel_w - mw) // 2
+        pg.draw.rect(self.screen, UI_TEXT_MUTED, (mx - 1, y - 1, mw + 2, mh + 2), 1)
+        self.screen.blit(mini, (mx, y))
+        y += mh + 8
+        last = lines[-1]
+        self.screen.blit(last, (WIDTH - pad - last.get_width(), y))
 
     def _slot_bg_for_item(self, item_id):
         if not item_id or item_id not in ITEM_DEFS:
             return SLOT_BG
-        # Keep these utility items visually fixed regardless of rarity.
-        if item_id == 'gold_coin':
-            return (245, 210, 70)  # always yellow
-        if item_id == 'health_potion':
-            return (185, 55, 55)   # always red
         r = ITEM_DEFS[item_id].get('rarity', 'common')
         return RARITY_SLOT_BG.get(r, SLOT_BG)
 
@@ -906,6 +969,25 @@ class Game:
         self._item_sprite_cache[cache_key] = scaled
         return scaled
 
+    def _draw_infused_rune_corners(self, rect, color, dimmed=False, arm=11, width=3):
+        """L-shaped highlights at each slot corner using the infused rune's colour."""
+        if dimmed:
+            color = tuple(max(0, min(255, int(c * 0.55))) for c in color)
+        x, y, w, h = rect.x, rect.y, rect.width, rect.height
+        a = max(4, min(arm, w // 3, h // 3))
+        # Top-left
+        pg.draw.line(self.screen, color, (x, y), (x + a, y), width)
+        pg.draw.line(self.screen, color, (x, y), (x, y + a), width)
+        # Top-right
+        pg.draw.line(self.screen, color, (x + w - 1, y), (x + w - 1 - a, y), width)
+        pg.draw.line(self.screen, color, (x + w - 1, y), (x + w - 1, y + a), width)
+        # Bottom-left
+        pg.draw.line(self.screen, color, (x, y + h - 1), (x + a, y + h - 1), width)
+        pg.draw.line(self.screen, color, (x, y + h - 1), (x, y + h - 1 - a), width)
+        # Bottom-right
+        pg.draw.line(self.screen, color, (x + w - 1, y + h - 1), (x + w - 1 - a, y + h - 1), width)
+        pg.draw.line(self.screen, color, (x + w - 1, y + h - 1), (x + w - 1, y + h - 1 - a), width)
+
     def draw_slot(self, x, y, slot_data, selected=False, highlight=False, dimmed=False):
         """Draw one inventory slot at (x, y). Returns the pg.Rect."""
         rect = pg.Rect(x, y, SLOT_SIZE, SLOT_SIZE)
@@ -917,7 +999,7 @@ class Game:
         pg.draw.rect(self.screen, bg, rect)
         pg.draw.rect(self.screen, border_color, rect, 2)
         if slot_data:
-            item_id, count = slot_data[0], slot_data[1]
+            item_id, count, meta = unpack_slot(slot_data)
             pad = 5
             inner = SLOT_SIZE - 2 * pad
             if item_id in ITEM_DEFS:
@@ -947,6 +1029,18 @@ class Game:
                 pg.draw.rect(self.screen, (95, 98, 120), (badge_x, badge_y, bw, bh), 1)
                 self.screen.blit(font.render(text, True, (0, 0, 0)), (badge_x + 5, badge_y + 3))
                 self.screen.blit(t_surf, (badge_x + 4, badge_y + 2))
+            rune_id = meta.get('infused_rune') if meta else None
+            if (
+                rune_id
+                and item_id
+                and ITEM_DEFS.get(item_id, {}).get('type') == 'weapon'
+            ):
+                rdef = ITEM_DEFS.get(rune_id)
+                if rdef:
+                    rc = rdef.get('color', (220, 220, 220))
+                    if isinstance(rc, list):
+                        rc = tuple(rc)
+                    self._draw_infused_rune_corners(rect, rc, dimmed=dimmed)
         return rect
 
     def draw_hotbar(self):
@@ -1018,11 +1112,11 @@ class Game:
         pg.draw.rect(self.screen, GOLD, (panel_x, panel_y, panel_w, panel_h), 2)
 
         hint_shadow = font_sm.render(
-            "E / I / Esc close | Hold Shift over item: salvage rolls | Shift+R-click: salvage weapon",
+            "E / I / Esc close | Shift+tooltip: salvage odds | Shift+R-click: salvage weapon (bag, hotbar, equip)",
             True, (0, 0, 0))
         self.screen.blit(hint_shadow, (panel_x + 13, panel_y + panel_h - 21))
         close_hint = font_sm.render(
-            "E / I / Esc close | Hold Shift over item: salvage rolls | Shift+R-click: salvage weapon",
+            "E / I / Esc close | Shift+tooltip: salvage odds | Shift+R-click: salvage weapon (bag, hotbar, equip)",
             True, UI_TEXT_BRIGHT)
         self.screen.blit(close_hint, (panel_x + 12, panel_y + panel_h - 22))
 
@@ -1062,7 +1156,8 @@ class Game:
             eq_order = ['head', 'chest', 'boots', 'shield', 'weapon']
             for eq_slot in eq_order:
                 item_id = self.inventory.equipment.get(eq_slot)
-                slot_data = (item_id, 1) if item_id else None
+                em = self.inventory.equipment_meta.get(eq_slot)
+                slot_data = pack_slot(item_id, 1, em) if item_id else None
                 is_drag_src = self.inv_dragging and self.inv_dragging[0] == 'equip' and self.inv_dragging[1] == eq_slot
                 is_selected = self.inv_selected == ('equip', eq_slot)
                 r = self.draw_slot(eq_x, eq_y, slot_data, highlight=is_selected, dimmed=is_drag_src)
@@ -1443,7 +1538,7 @@ class Game:
 
         # --- Drag ghost ---
         if self.inv_dragging:
-            _, _, drag_item_id, drag_count, _dm = self._inv_drag_parts()
+            _, _, drag_item_id, drag_count, drag_meta = self._inv_drag_parts()
             ghost_size = SLOT_SIZE - 8
             gx = mouse_pos[0] - ghost_size // 2
             gy = mouse_pos[1] - ghost_size // 2
@@ -1461,6 +1556,18 @@ class Game:
                 color = ITEM_DEFS[drag_item_id]['color']
                 pg.draw.rect(ghost, (*color, 200), (4, 4, ghost_size - 8, ghost_size - 8))
             self.screen.blit(ghost, (gx, gy))
+            drune = (drag_meta or {}).get('infused_rune')
+            if (
+                drune
+                and drag_item_id
+                and ITEM_DEFS.get(drag_item_id, {}).get('type') == 'weapon'
+            ):
+                rd = ITEM_DEFS.get(drune)
+                if rd:
+                    rc = rd.get('color', (220, 220, 220))
+                    if isinstance(rc, list):
+                        rc = tuple(rc)
+                    self._draw_infused_rune_corners(pg.Rect(gx, gy, ghost_size, ghost_size), rc)
             if drag_count > 1:
                 cnt = font_sm.render(str(drag_count), True, UI_TEXT_BRIGHT)
                 self.screen.blit(font_sm.render(str(drag_count), True, (0, 0, 0)), (gx + ghost_size - cnt.get_width() + 1, gy + ghost_size - cnt.get_height() + 1))
@@ -1725,6 +1832,10 @@ class Game:
             if pg.key.get_mods() & pg.KMOD_SHIFT:
                 if source == 'inv':
                     if self.inventory.try_salvage_inv_slot(index):
+                        self._sync_discovered_recipes_from_inventory()
+                        self.save_inventory_state()
+                elif source == 'hotbar':
+                    if self.inventory.try_salvage_hotbar_slot(index):
                         self._sync_discovered_recipes_from_inventory()
                         self.save_inventory_state()
                 elif source == 'equip' and index == 'weapon':

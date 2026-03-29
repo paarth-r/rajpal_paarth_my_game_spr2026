@@ -6,40 +6,43 @@
     ],
     [
       "string",
-      4
+      3
     ],
     [
       "storm_rune",
-      3
+      2
     ],
     null,
     [
       "assassin_blade_shard",
-      9
+      10
     ],
     null,
     null,
     null,
     [
-      "leather_strip",
-      2
+      "gold_coin",
+      42
     ],
-    null,
+    [
+      "gold_coin",
+      99
+    ],
     [
       "ember_rune",
-      2
+      1
     ],
     null,
     [
       "assassin_handle_wrap",
-      14
+      16
     ],
     null,
     null,
     null,
     [
       "cobweb",
-      49
+      56
     ],
     null,
     null,
@@ -50,9 +53,12 @@
     null,
     [
       "iron_scrap",
-      9
+      10
     ],
-    null,
+    [
+      "leather_strip",
+      2
+    ],
     null,
     null,
     null,
@@ -61,7 +67,7 @@
     null,
     [
       "stone_chip",
-      22
+      27
     ],
     [
       "legion_helm",
@@ -76,16 +82,11 @@
   ],
   "hotbar": [
     [
-      "gold_coin",
-      99
-    ],
-    [
-      "health_potion",
-      10
-    ],
-    [
-      "health_potion",
-      5
+      "aug_soul_stealer",
+      1,
+      {
+        "infused_rune": "frost_rune"
+      }
     ],
     [
       "aug_assassins_grace",
@@ -95,15 +96,23 @@
       }
     ],
     [
-      "gold_coin",
-      23
+      "aug_soul_stealer",
+      1,
+      {
+        "infused_rune": "ember_rune"
+      }
     ],
     null,
     null,
+    null,
+    [
+      "health_potion_large",
+      1
+    ],
     null
   ],
   "equipment": {
-    "weapon": "aug_soul_stealer",
+    "weapon": "aug_assassin_shortbow",
     "head": "galea",
     "chest": "legion_cuirass",
     "boots": "caligae",
@@ -111,12 +120,12 @@
   },
   "equipment_meta": {
     "weapon": {
-      "infused_rune": "frost_rune"
+      "infused_rune": "storm_rune"
     }
   },
-  "selected_hotbar_index": 2,
-  "player_health": 225,
-  "current_level": "level7.txt",
+  "selected_hotbar_index": 0,
+  "player_health": 255,
+  "current_level": "level8.txt",
   "mob_states": {
     "level1.txt": [],
     "level2.txt": [],
@@ -124,7 +133,23 @@
     "level4.txt": [],
     "level5.txt": [],
     "level6.txt": [],
-    "level7.txt": []
+    "level7.txt": [],
+    "level8.txt": [
+      {
+        "tile_x": 43,
+        "tile_y": 1,
+        "health": 230,
+        "state": "inactive",
+        "mob_type": "ghost"
+      },
+      {
+        "tile_x": 43,
+        "tile_y": 2,
+        "health": 150,
+        "state": "inactive",
+        "mob_type": "shadow_assassin"
+      }
+    ]
   },
   "discovered_recipes": [
     "assassin_shortbow",
@@ -132,14 +157,15 @@
     "woven_cobweb"
   ],
   "player_class_id": "assassin",
-  "player_level": 15,
-  "player_xp": 265,
-  "skill_points": 7,
+  "player_level": 17,
+  "player_xp": 250,
+  "skill_points": 8,
   "purchased_skill_nodes": [
     "ass_blade",
     "ass_dancer",
     "ass_execution",
     "ass_lethal",
+    "ass_nightlord",
     "ass_shadow",
     "ass_survivor",
     "ass_veil"

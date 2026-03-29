@@ -626,9 +626,11 @@ class Mob(Sprite):
             self._ensure_rect_valid()
             return
 
-        # Optional one-time combat heal (used by shadow assassin).
+        # Optional one-time combat heal (shadow assassin, ghost, etc.).
+        # Must be able to interrupt attack: mobs with soul steal often cross the HP threshold
+        # only while attacking, and steal on the hit frame pushes them back above threshold before idle.
         if (
-            self.state not in ('attack', 'heal')
+            self.state != 'heal'
             and not self.heal_used
             and self.heal_once_amount > 0
             and self.heal_frames

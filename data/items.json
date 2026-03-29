@@ -11,7 +11,7 @@
         "stackable": true,
         "max_stack": 99,
         "description": "A worn gold coin from a forgotten empire.",
-        "rarity": "common"
+        "rarity": "rare"
     },
     "health_potion": {
         "name": "Health Potion",
@@ -24,11 +24,28 @@
         "sprite": "healthpot.png",
         "stackable": true,
         "max_stack": 10,
+        "description": "Restores 25 health.",
+        "effect": {
+            "heal": 25
+        },
+        "rarity": "common"
+    },
+    "health_potion_large": {
+        "name": "Greater Health Potion",
+        "type": "consumable",
+        "color": [
+            220,
+            40,
+            90
+        ],
+        "sprite": "healthpot.png",
+        "stackable": true,
+        "max_stack": 10,
         "description": "Restores 50 health.",
         "effect": {
             "heal": 50
         },
-        "rarity": "common"
+        "rarity": "uncommon"
     },
     "rusty_key": {
         "name": "Rusty Key",
@@ -244,9 +261,9 @@
                 "item_id": "wood_splinter",
                 "count": [
                     1,
-                    2
+                    3
                 ],
-                "chance": 0.5
+                "chance": 0.88
             }
         ],
         "augment_output": "aug_stone_hammer",
@@ -647,9 +664,9 @@
         "name": "Vulcanian Ember",
         "type": "rune",
         "color": [
-            220,
-            90,
-            40
+            255,
+            115,
+            25
         ],
         "sprite": "vulcanrune.png",
         "stackable": true,
@@ -663,9 +680,9 @@
         "name": "Boreal Frost",
         "type": "rune",
         "color": [
-            120,
-            190,
-            235
+            150,
+            215,
+            255
         ],
         "sprite": "borealrune.png",
         "stackable": true,
@@ -679,9 +696,9 @@
         "name": "Jupiterian Spark",
         "type": "rune",
         "color": [
-            170,
-            140,
-            230
+            28,
+            52,
+            128
         ],
         "sprite": "jupiterrune.png",
         "stackable": true,
@@ -793,9 +810,9 @@
                 "item_id": "wood_splinter",
                 "count": [
                     1,
-                    2
+                    3
                 ],
-                "chance": 0.5
+                "chance": 0.88
             }
         ],
         "rune_blessings": {

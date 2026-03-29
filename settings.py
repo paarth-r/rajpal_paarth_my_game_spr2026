@@ -95,6 +95,12 @@ HUD_XP_BAR_FILL = (70, 110, 200)
 HUD_XP_BAR_OUTLINE = BLACK
 HUD_XP_BAR_OUTLINE_W = 2
 
+# Top-right: dungeon floor, minimap, mob count
+DUNGEON_PANEL_MINIMAP_MAX_PX = 118  # longest side of minimap (scales with map size)
+DUNGEON_PANEL_MINIMAP_WALL = (22, 24, 32)
+DUNGEON_PANEL_MINIMAP_FLOOR = (48, 50, 58)
+DUNGEON_PANEL_MINIMAP_PLAYER = (255, 220, 80)
+
 # Inventory and item bar (hotbar)
 INVENTORY_SLOTS = 40
 HOTBAR_SLOTS = 8
