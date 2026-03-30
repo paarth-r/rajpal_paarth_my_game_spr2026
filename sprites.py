@@ -703,7 +703,7 @@ class Mob(Sprite):
             self._ensure_rect_valid()
             return
 
-        if adjacent and in_attack_range and has_los and (now - self.last_attack) >= self.mob_attack_cooldown:
+        if in_attack_range and dist_sq_tiles > 0 and has_los and (now - self.last_attack) >= self.mob_attack_cooldown:
             # Briefly show "blade-ready" stance before attack frames when available.
             if self.idle_frames:
                 self._update_image_cache(self.idle_frames[0])

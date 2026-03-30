@@ -110,3 +110,39 @@ def iter_player_shop_listings(game):
     """Yield (listing_dict, state_dict) for each catalog row."""
     for L in PLAYER_SHOP_LISTINGS:
         yield L, listing_state(game, L)
+
+
+def coins_for_sell_item(item_id, count):
+    """Total coins for selling count × item_id (per-unit sell price from ITEM_DEFS)."""
+    if count <= 0 or item_id not in ITEM_DEFS:
+        return 0
+    each = int(ITEM_DEFS[item_id].get('sell', 0))
+    return max(0, each * int(count))
+
+
+def try_sell_staged_item(game):
+    """Sell whatever is in the shop sell slot for coins. Clears staging."""
+    inv = game.inventory
+    st = getattr(inv, '_shop_sell_staged', None)
+    if not st:
+        return False, 'Put an item in the sell slot.'
+    item_id = st['item_id']
+    count = int(st['count'])
+    if count <= 0:
+        inv._shop_sell_staged = None
+        return False, 'Nothing to sell.'
+    total = coins_for_sell_item(item_id, count)
+    if total <= 0:
+        return False, 'That item cannot be sold.'
+    snapshot = {
+        'item_id': st['item_id'],
+        'count': int(st['count']),
+        'meta': dict(st.get('meta') or {}),
+    }
+    inv._shop_sell_staged = None
+    leftover = inv.add_item('gold_coin', total)
+    if leftover > 0:
+        inv._shop_sell_staged = snapshot
+        return False, 'No room for coins.'
+    game.on_items_gained('gold_coin', total)
+    return True, f'+{total} coins'

@@ -15,6 +15,21 @@ from weapons import (
 
 _DATA_DIR = path.join(path.dirname(__file__), 'data')
 
+def _default_sell_for_rarity(d):
+    r = d.get('rarity', 'common')
+    base = {
+        'common': 2,
+        'uncommon': 5,
+        'rare': 12,
+        'epic': 28,
+        'legendary': 60,
+        'mythic': 120,
+        'divine': 240,
+        'gamebreaking': 400,
+    }
+    return int(base.get(r, 2))
+
+
 def load_item_defs():
     fp = path.join(_DATA_DIR, 'items.json')
     with open(fp, 'r') as f:
@@ -23,6 +38,10 @@ def load_item_defs():
     for item_id, d in raw.items():
         d['color'] = tuple(d.get('color', [200, 200, 200]))
         d.setdefault('rarity', 'common')
+        if item_id == 'gold_coin':
+            d['sell'] = 0
+        else:
+            d.setdefault('sell', _default_sell_for_rarity(d))
         if d.get('type') == 'weapon':
             d.setdefault('attack_range_tiles', PLAYER_DEFAULT_ATTACK_RANGE_TILES)
         defs[item_id] = d
@@ -74,6 +93,24 @@ class Inventory:
         # Upgrade UI staging: weapon+rune before infusion.
         self._upgrade_weapon_item_id = None
         self._upgrade_rune_item_id = None
+        # Shop sell staging: item staged for sale (removed from bag/hotbar/equip while here).
+        self._shop_sell_staged = None  # None or {'item_id', 'count', 'meta'}
+
+    def return_shop_sell_staging(self):
+        """Return staged sell item to inventory and clear."""
+        st = self._shop_sell_staged
+        if not st:
+            return
+        iid, n = st['item_id'], int(st['count'])
+        meta = st.get('meta') or {}
+        if n <= 0:
+            self._shop_sell_staged = None
+            return
+        sm = meta if (n == 1 and meta) else None
+        leftover = self.add_item(iid, n, slot_meta=sm)
+        if leftover > 0:
+            pass  # should not happen if staging was valid
+        self._shop_sell_staged = None
 
     def return_craft_staging(self):
         """Return staged crafting parts to inventory and clear the craft grid."""

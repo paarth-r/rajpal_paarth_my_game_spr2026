@@ -41,13 +41,27 @@ def loot_entries_for_intro_chest(game, col, row):
     return None
 
 
+def intro_starter_chest_opened(game):
+    if not is_intro_level(game):
+        return False
+    oc = getattr(game, 'opened_chests', set())
+    lv = getattr(game, 'current_level_name', None)
+    for sx, sy in STARTER_CHEST_TILES:
+        if chest_storage_key(lv, sx, sy) in oc:
+            return True
+    return False
+
+
 def refresh_intro_exit_open(game):
-    """Intro forward exit: starter chest opened and all mobs dead."""
+    """Intro forward exit: starter chest opened, straw target defeated, skill point spent, no live mobs."""
     if not is_intro_level(game):
         return
     live = [
         m for m in game.all_mobs
         if getattr(m, 'state', None) != 'dead' and getattr(m, 'health', 0) > 0
     ]
-    unlocked = bool(getattr(game, 'intro_exit_unlocked', False))
+    chest_ok = intro_starter_chest_opened(game)
+    skill_ok = len(getattr(game, 'purchased_skill_nodes', set())) >= 1
+    unlocked = chest_ok and skill_ok
+    game.intro_exit_unlocked = unlocked
     game.level_exit_open = unlocked and len(live) == 0

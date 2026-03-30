@@ -218,6 +218,7 @@ def go_to_next_level(self):
     self.pause_menu_open = False
     self.inventory.return_craft_staging()
     self.inventory.return_upgrade_staging()
+    self.inventory.return_shop_sell_staging()
     self.inventory_open = False
     self.inv_dragging = None
     self.inv_selected = None
@@ -239,6 +240,7 @@ def go_to_prev_level(self):
     self.pause_menu_open = False
     self.inventory.return_craft_staging()
     self.inventory.return_upgrade_staging()
+    self.inventory.return_shop_sell_staging()
     self.inventory_open = False
     self.inv_dragging = None
     self.inv_selected = None

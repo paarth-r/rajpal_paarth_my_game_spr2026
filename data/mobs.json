@@ -107,7 +107,7 @@
         "chase_range_tiles": 8,
         "activation_range_tiles": 6,
         "attack_cooldown_ms": 1800,
-        "attack_range_tiles": 1.1,
+        "attack_range_tiles": 2.0,
         "xp": 45,
         "move_delay_ms": 300,
         "slide_duration_ms": 170,

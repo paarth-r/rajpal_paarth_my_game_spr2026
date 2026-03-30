@@ -11,7 +11,8 @@
         "stackable": true,
         "max_stack": 99,
         "description": "A worn gold coin from a forgotten empire.",
-        "rarity": "rare"
+        "rarity": "rare",
+        "sell": 0
     },
     "health_potion": {
         "name": "Health Potion",
@@ -28,7 +29,8 @@
         "effect": {
             "heal": 25
         },
-        "rarity": "common"
+        "rarity": "common",
+        "sell": 2
     },
     "health_potion_large": {
         "name": "Greater Health Potion",
@@ -45,7 +47,8 @@
         "effect": {
             "heal": 50
         },
-        "rarity": "uncommon"
+        "rarity": "uncommon",
+        "sell": 5
     },
     "rusty_key": {
         "name": "Rusty Key",
@@ -59,7 +62,8 @@
         "stackable": false,
         "max_stack": 1,
         "description": "An ancient key. What does it open?",
-        "rarity": "uncommon"
+        "rarity": "uncommon",
+        "sell": 5
     },
     "iron_scrap": {
         "name": "Iron Scrap",
@@ -73,7 +77,8 @@
         "stackable": true,
         "max_stack": 99,
         "description": "Salvaged metal. Used in forging.",
-        "rarity": "common"
+        "rarity": "common",
+        "sell": 2
     },
     "leather_strip": {
         "name": "Leather Strip",
@@ -87,7 +92,8 @@
         "stackable": true,
         "max_stack": 99,
         "description": "Cut from old grips and sheaths.",
-        "rarity": "common"
+        "rarity": "common",
+        "sell": 2
     },
     "wood_splinter": {
         "name": "Wood Splinter",
@@ -101,7 +107,8 @@
         "stackable": true,
         "max_stack": 99,
         "description": "Salvaged haft or bow wood.",
-        "rarity": "common"
+        "rarity": "common",
+        "sell": 2
     },
     "cobweb": {
         "name": "Cobweb",
@@ -115,7 +122,8 @@
         "stackable": true,
         "max_stack": 99,
         "description": "Dusty silk from a crumbling sentinel. Weave five into a sturdy string.",
-        "rarity": "common"
+        "rarity": "common",
+        "sell": 2
     },
     "string": {
         "name": "String",
@@ -129,7 +137,8 @@
         "stackable": true,
         "max_stack": 99,
         "description": "Twisted fiber for grips, bows, and bindings.",
-        "rarity": "common"
+        "rarity": "common",
+        "sell": 2
     },
     "stone_chip": {
         "name": "Stone Chip",
@@ -143,7 +152,8 @@
         "stackable": true,
         "max_stack": 99,
         "description": "Flakes from a stone weapon.",
-        "rarity": "common"
+        "rarity": "common",
+        "sell": 2
     },
     "arcane_sliver": {
         "name": "Arcane Sliver",
@@ -157,7 +167,8 @@
         "stackable": true,
         "max_stack": 99,
         "description": "Residual focus energy from a staff.",
-        "rarity": "uncommon"
+        "rarity": "uncommon",
+        "sell": 5
     },
     "assassin_blade_shard": {
         "name": "Assassin Blade Shard",
@@ -171,7 +182,8 @@
         "stackable": true,
         "max_stack": 20,
         "description": "A fragment of a shadow-forged edge. Fits a dagger blade slot.",
-        "rarity": "uncommon"
+        "rarity": "uncommon",
+        "sell": 5
     },
     "assassin_handle_wrap": {
         "name": "Assassin Handle Wrap",
@@ -185,7 +197,8 @@
         "stackable": true,
         "max_stack": 20,
         "description": "Worn silk and leather from a rogue's grip. Fits a dagger handle slot.",
-        "rarity": "uncommon"
+        "rarity": "uncommon",
+        "sell": 5
     },
     "gladius": {
         "name": "Gladius",
@@ -226,7 +239,8 @@
             }
         ],
         "augment_output": "aug_gladius",
-        "augment_coin_cost": 30
+        "augment_coin_cost": 30,
+        "sell": 2
     },
     "stone_hammer": {
         "name": "Stone Hammer",
@@ -267,7 +281,8 @@
             }
         ],
         "augment_output": "aug_stone_hammer",
-        "augment_coin_cost": 30
+        "augment_coin_cost": 30,
+        "sell": 5
     },
     "pilum": {
         "name": "Pilum",
@@ -307,7 +322,8 @@
             }
         ],
         "augment_output": "aug_pilum",
-        "augment_coin_cost": 30
+        "augment_coin_cost": 30,
+        "sell": 2
     },
     "arcane_staff": {
         "name": "Arcane Staff",
@@ -347,7 +363,8 @@
             }
         ],
         "augment_output": "aug_arcane_staff",
-        "augment_coin_cost": 30
+        "augment_coin_cost": 30,
+        "sell": 2
     },
     "pugio": {
         "name": "Pugio",
@@ -387,7 +404,8 @@
             }
         ],
         "augment_output": "aug_pugio",
-        "augment_coin_cost": 30
+        "augment_coin_cost": 30,
+        "sell": 2
     },
     "assassins_grace": {
         "name": "Assassin's Grace",
@@ -436,7 +454,8 @@
             }
         ],
         "augment_output": "aug_assassins_grace",
-        "augment_coin_cost": 30
+        "augment_coin_cost": 30,
+        "sell": 12
     },
     "soul_stealer": {
         "name": "Soul Stealer",
@@ -452,7 +471,7 @@
         "sprite": "assassinsgrace.png",
         "stackable": false,
         "max_stack": 1,
-        "description": "A ghost-forged twin to the Grace. Faster, keener, and hungry—sometimes returns a bite of the damage you deal.",
+        "description": "A ghost-forged twin to the Grace. Faster, keener, and hungry\u2014sometimes returns a bite of the damage you deal.",
         "attack_range_tiles": 3,
         "base_damage": 27,
         "scaling_stat": "dexterity",
@@ -490,7 +509,8 @@
             }
         ],
         "augment_output": "aug_soul_stealer",
-        "augment_coin_cost": 40
+        "augment_coin_cost": 40,
+        "sell": 28
     },
     "assassin_shortbow": {
         "name": "Assassin's Shortbow",
@@ -531,7 +551,8 @@
             }
         ],
         "augment_output": "aug_assassin_shortbow",
-        "augment_coin_cost": 30
+        "augment_coin_cost": 30,
+        "sell": 5
     },
     "lorica": {
         "name": "Lorica Segmentata",
@@ -550,7 +571,8 @@
         "stat_bonus": {
             "health": 20
         },
-        "rarity": "rare"
+        "rarity": "rare",
+        "sell": 12
     },
     "galea": {
         "name": "Galea",
@@ -569,7 +591,8 @@
         "stat_bonus": {
             "strength": 2
         },
-        "rarity": "uncommon"
+        "rarity": "uncommon",
+        "sell": 5
     },
     "caligae": {
         "name": "Caligae",
@@ -588,7 +611,8 @@
         "stat_bonus": {
             "dexterity": 3
         },
-        "rarity": "uncommon"
+        "rarity": "uncommon",
+        "sell": 5
     },
     "scutum": {
         "name": "Scutum",
@@ -607,7 +631,8 @@
         "stat_bonus": {
             "health": 10
         },
-        "rarity": "rare"
+        "rarity": "rare",
+        "sell": 12
     },
     "legion_helm": {
         "name": "Legionnaire Helm",
@@ -624,7 +649,8 @@
         "description": "Standard-issue legionnaire helmet. Basic protection.",
         "defense": 3,
         "stat_bonus": {},
-        "rarity": "common"
+        "rarity": "common",
+        "sell": 2
     },
     "legion_cuirass": {
         "name": "Legionnaire Cuirass",
@@ -641,7 +667,8 @@
         "description": "Standard-issue legionnaire chest plate. Worn but sturdy.",
         "defense": 6,
         "stat_bonus": {},
-        "rarity": "common"
+        "rarity": "common",
+        "sell": 2
     },
     "legion_boots": {
         "name": "Legionnaire Boots",
@@ -658,7 +685,8 @@
         "description": "Standard-issue legionnaire boots. Good for marching.",
         "defense": 2,
         "stat_bonus": {},
-        "rarity": "common"
+        "rarity": "common",
+        "sell": 2
     },
     "ember_rune": {
         "name": "Vulcanian Ember",
@@ -674,7 +702,8 @@
         "patron_god": "Vulcan",
         "patron_realm": "Fire, forge, and volcanic heat.",
         "description": "A smoldering spark of the divine forge. Infusing a weapon channels Vulcan's heat into searing strikes.",
-        "rarity": "rare"
+        "rarity": "rare",
+        "sell": 12
     },
     "frost_rune": {
         "name": "Boreal Frost",
@@ -690,7 +719,8 @@
         "patron_god": "Boreas",
         "patron_realm": "Winds, snow, and frostbite (Roman counterpart to Boreas).",
         "description": "A shard of frozen ice. Infusion binds Boreas' chill to the blade, hobbling foes.",
-        "rarity": "rare"
+        "rarity": "rare",
+        "sell": 12
     },
     "storm_rune": {
         "name": "Jupiterian Spark",
@@ -706,7 +736,8 @@
         "patron_god": "Jupiter",
         "patron_realm": "Sky, thunder, and sovereign lightning.",
         "description": "A captured ribbon of thunder. Infusion binds Jupiter's lightning to the blade, seeking a second victim nearby.",
-        "rarity": "rare"
+        "rarity": "rare",
+        "sell": 12
     },
     "aug_gladius": {
         "name": "Augmented Gladius",
@@ -775,7 +806,8 @@
                     "damage_fraction": 0.38
                 }
             }
-        }
+        },
+        "sell": 5
     },
     "aug_stone_hammer": {
         "name": "Augmented Stone Hammer",
@@ -844,7 +876,8 @@
                     "damage_fraction": 0.38
                 }
             }
-        }
+        },
+        "sell": 12
     },
     "aug_pilum": {
         "name": "Augmented Pilum",
@@ -913,7 +946,8 @@
                     "damage_fraction": 0.38
                 }
             }
-        }
+        },
+        "sell": 5
     },
     "aug_arcane_staff": {
         "name": "Augmented Arcane Staff",
@@ -982,7 +1016,8 @@
                     "damage_fraction": 0.38
                 }
             }
-        }
+        },
+        "sell": 5
     },
     "aug_pugio": {
         "name": "Augmented Pugio",
@@ -1051,7 +1086,8 @@
                     "damage_fraction": 0.38
                 }
             }
-        }
+        },
+        "sell": 5
     },
     "aug_assassins_grace": {
         "name": "Augmented Assassin's Grace",
@@ -1128,7 +1164,8 @@
                     "damage_fraction": 0.38
                 }
             }
-        }
+        },
+        "sell": 28
     },
     "aug_soul_stealer": {
         "name": "Augmented Soul Stealer",
@@ -1210,7 +1247,8 @@
                     "damage_fraction": 0.38
                 }
             }
-        }
+        },
+        "sell": 60
     },
     "aug_assassin_shortbow": {
         "name": "Augmented Assassin's Shortbow",
@@ -1279,7 +1317,8 @@
                     "damage_fraction": 0.38
                 }
             }
-        }
+        },
+        "sell": 12
     },
     "lichenward_strap": {
         "name": "Lichenward Strap",
@@ -1297,6 +1336,7 @@
         "stat_bonus": {},
         "rarity": "epic",
         "shield_trail_nearest_mob": true,
-        "description": "Corpse-wagons once hung damp copper mesh at the vault gate; lichen grew only where draft beasts were tethered, and the growth always leaned toward living breath. Yours still does—softly, hungrily—toward whatever in the hall still has pulse enough to notice."
+        "description": "Corpse-wagons once hung damp copper mesh at the vault gate; lichen grew only where draft beasts were tethered, and the growth always leaned toward living breath. Yours still does\u2014softly, hungrily\u2014toward whatever in the hall still has pulse enough to notice.",
+        "sell": 28
     }
 }

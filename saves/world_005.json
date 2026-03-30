@@ -1,5 +1,22 @@
 {
   "slots": [
+    [
+      "arcane_sliver",
+      4
+    ],
+    [
+      "wood_splinter",
+      3
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
+    [
+      "assassin_blade_shard",
+      5
+    ],
     null,
     null,
     null,
@@ -7,15 +24,10 @@
     null,
     null,
     null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
+    [
+      "assassin_handle_wrap",
+      5
+    ],
     null,
     null,
     null,
@@ -44,67 +56,67 @@
   "hotbar": [
     [
       "gold_coin",
-      11
+      82
     ],
-    null,
     [
-      "iron_scrap",
-      3
+      "assassin_shortbow",
+      1
+    ],
+    [
+      "health_potion",
+      9
     ],
     [
       "cobweb",
-      5
+      14
     ],
-    null,
-    null,
-    null,
+    [
+      "stone_chip",
+      15
+    ],
+    [
+      "legion_helm",
+      1
+    ],
+    [
+      "galea",
+      1
+    ],
     null
   ],
   "equipment": {
-    "weapon": "pugio",
-    "head": "legion_helm",
-    "chest": "legion_cuirass",
-    "boots": "caligae",
+    "weapon": "arcane_staff",
+    "head": "galea",
+    "chest": "lorica",
+    "boots": "legion_boots",
     "shield": null
   },
   "equipment_meta": {},
-  "selected_hotbar_index": 1,
-  "player_health": 100,
-  "current_level": "level1.txt",
+  "selected_hotbar_index": 2,
+  "player_health": 285,
+  "current_level": "level4.txt",
   "mob_states": {
     "intro.txt": [],
-    "level1.txt": [
-      {
-        "tile_x": 17,
-        "tile_y": 7,
-        "health": 200,
-        "state": "inactive",
-        "mob_type": "statue"
-      },
-      {
-        "tile_x": 21,
-        "tile_y": 20,
-        "health": 200,
-        "state": "inactive",
-        "mob_type": "statue"
-      },
-      {
-        "tile_x": 20,
-        "tile_y": 21,
-        "health": 200,
-        "state": "inactive",
-        "mob_type": "statue"
-      }
-    ]
+    "level1.txt": [],
+    "level2.txt": [],
+    "level3.txt": [],
+    "level4.txt": []
   },
   "discovered_recipes": [
+    "assassin_shortbow",
+    "assassins_grace",
     "woven_cobweb"
   ],
-  "player_class_id": "assassin",
-  "player_level": 3,
-  "player_xp": 35,
-  "skill_points": 2,
-  "purchased_skill_nodes": [],
+  "player_class_id": "arcanist",
+  "player_level": 8,
+  "player_xp": 190,
+  "skill_points": 3,
+  "purchased_skill_nodes": [
+    "arc_focus",
+    "arc_mind",
+    "arc_scholar",
+    "arc_ward"
+  ],
   "opened_chests": [
     "intro.txt:13,1"
   ],

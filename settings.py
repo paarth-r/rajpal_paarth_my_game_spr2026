@@ -97,9 +97,12 @@ HUD_XP_BAR_OUTLINE_W = 2
 
 # Top-right: dungeon floor, minimap, mob count
 DUNGEON_PANEL_MINIMAP_MAX_PX = 118  # longest side of minimap (scales with map size)
+DUNGEON_PANEL_MINIMAP_EXPAND_MULT = 1.42  # click minimap to enlarge; shows exit tiles
 DUNGEON_PANEL_MINIMAP_WALL = (22, 24, 32)
 DUNGEON_PANEL_MINIMAP_FLOOR = (48, 50, 58)
 DUNGEON_PANEL_MINIMAP_PLAYER = (255, 220, 80)
+DUNGEON_PANEL_MINIMAP_GATE_OPEN = (145, 60, 210)
+DUNGEON_PANEL_MINIMAP_GATE_LOCKED = (72, 48, 92)
 
 # Inventory and item bar (hotbar)
 INVENTORY_SLOTS = 40

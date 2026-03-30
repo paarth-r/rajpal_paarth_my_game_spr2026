@@ -162,6 +162,7 @@ class Game:
         self.class_picker_begin_rect = None
         self.skill_node_rects = []
         self.skill_tree_page = 0
+        self.minimap_screen_rect = None
         self.damage_numbers = []
         self.chain_lightning_fx = []
         self.death_screen_coins_lost = 0
@@ -230,6 +231,7 @@ class Game:
                         self.pause_menu_open = True
                         self.inventory.return_craft_staging()
                         self.inventory.return_upgrade_staging()
+                        self.inventory.return_shop_sell_staging()
                         self.inventory_open = False
                         self.inv_dragging = None
                         self.inv_selected = None
@@ -240,6 +242,7 @@ class Game:
                     if event.key in (INVENTORY_KEY, CHARACTER_KEY, pg.K_ESCAPE):
                         self.inventory.return_craft_staging()
                         self.inventory.return_upgrade_staging()
+                        self.inventory.return_shop_sell_staging()
                         self.inventory_open = False
                         self.inv_dragging = None
                         self.inv_selected = None
@@ -328,6 +331,7 @@ class Game:
                         self.pause_menu_open = False
                         self.inventory.return_craft_staging()
                         self.inventory.return_upgrade_staging()
+                        self.inventory.return_shop_sell_staging()
                         self.inventory_open = False
                         self.state = 'intro'
                     elif self.pause_resume_btn_rect and self.pause_resume_btn_rect.collidepoint(event.pos):
@@ -375,6 +379,7 @@ class Game:
             self.state = 'death'
             self.inventory.return_craft_staging()
             self.inventory.return_upgrade_staging()
+            self.inventory.return_shop_sell_staging()
             self.inventory_open = False
             self.inv_dragging = None
             self.inv_selected = None
@@ -556,7 +561,8 @@ class Game:
                 ty = sy - txt.get_height() // 2
                 self.screen.blit(txt, (tx, ty))
         self.draw_hud()
-        self._draw_intro_tutorial_overlay()
+        self._draw_intro_walkthrough_panel()
+        self._draw_chest_interact_prompt()
         self.draw_hotbar()
         if self.inventory_open:
             self.draw_inventory()
@@ -900,6 +906,7 @@ class Game:
 
     def _draw_top_right_dungeon_panel(self):
         """Top-right: save/world label, dungeon floor, minimap with player, live mob count."""
+        self.minimap_screen_rect = None
         if not hasattr(self, 'map') or self.player is None:
             return
         pad = HUD_PADDING
@@ -919,7 +926,8 @@ class Game:
 
         tw, th = self.map.tilewidth, self.map.tileheight
         max_tiles = max(tw, th, 1)
-        cell = max(1, DUNGEON_PANEL_MINIMAP_MAX_PX // max_tiles)
+        max_px = int(DUNGEON_PANEL_MINIMAP_MAX_PX * DUNGEON_PANEL_MINIMAP_EXPAND_MULT)
+        cell = max(1, max_px // max_tiles)
         mw, mh = tw * cell, th * cell
         mini = pg.Surface((mw, mh))
         mini.fill(DUNGEON_PANEL_MINIMAP_FLOOR)
@@ -927,11 +935,19 @@ class Game:
             for c in range(tw):
                 if self.map.data[r][c] == '1':
                     mini.fill(DUNGEON_PANEL_MINIMAP_WALL, (c * cell, r * cell, cell, cell))
+        for gx, gy in getattr(self, 'level_exit_tiles', []) or []:
+            if 0 <= gx < tw and 0 <= gy < th:
+                gc = (
+                    DUNGEON_PANEL_MINIMAP_GATE_OPEN
+                    if self.level_exit_open
+                    else DUNGEON_PANEL_MINIMAP_GATE_LOCKED
+                )
+                mini.fill(gc, (gx * cell, gy * cell, cell, cell))
         px, py = self.player.tile_x, self.player.tile_y
         if 0 <= px < tw and 0 <= py < th:
             cx = px * cell + cell // 2
             cy = py * cell + cell // 2
-            rad = max(2, min(cell // 2, 5))
+            rad = max(2, min(cell // 2, 6))
             pg.draw.circle(mini, DUNGEON_PANEL_MINIMAP_PLAYER, (cx, cy), rad)
             pg.draw.circle(mini, BLACK, (cx, cy), rad, 1)
 
@@ -943,7 +959,10 @@ class Game:
             self.screen.blit(s, (WIDTH - pad - s.get_width(), y))
             y += s.get_height() + 4
         mx = x0 + (panel_w - mw) // 2
-        pg.draw.rect(self.screen, UI_TEXT_MUTED, (mx - 1, y - 1, mw + 2, mh + 2), 1)
+        border = 2
+        bcol = GOLD
+        pg.draw.rect(self.screen, bcol, (mx - border, y - border, mw + 2 * border, mh + 2 * border), border)
+        self.minimap_screen_rect = pg.Rect(mx - border, y - border, mw + 2 * border, mh + 2 * border)
         self.screen.blit(mini, (mx, y))
         y += mh + 8
         last = lines[-1]
@@ -1061,46 +1080,148 @@ class Game:
         k = intro_ops.chest_storage_key(self.current_level_name, col, row)
         self.opened_chests.add(k)
         self._set_map_tile(col, row, '.')
-        if intro_ops.is_intro_level(self) and (col, row) in intro_ops.STARTER_CHEST_TILES:
-            self.intro_exit_unlocked = True
         for item_id, n in entries:
             self.on_items_gained(item_id, int(n))
         intro_ops.refresh_intro_exit_open(self)
         self.save_inventory_state()
 
-    def _intro_tutorial_lines(self):
+    def _adjacent_unopened_chest_tile(self):
+        """Return (col, row) of a closed chest the player can open this frame, or None."""
+        if not hasattr(self, 'map') or self.player is None:
+            return None
+        px, py = self.player.tile_x, self.player.tile_y
+        seen = set()
+        for cx, cy in ((px, py), (px + 1, py), (px - 1, py), (px, py + 1), (px, py - 1)):
+            if (cx, cy) in seen:
+                continue
+            seen.add((cx, cy))
+            if cy < 0 or cy >= len(self.map.data) or cx < 0 or cx >= len(self.map.data[cy]):
+                continue
+            if self.map.data[cy][cx] != 'C':
+                continue
+            k = intro_ops.chest_storage_key(self.current_level_name, cx, cy)
+            if k in getattr(self, 'opened_chests', set()):
+                continue
+            return (cx, cy)
+        return None
+
+    def _intro_starter_chest_opened(self):
+        return intro_ops.intro_starter_chest_opened(self)
+
+    def _live_training_dummy_count(self):
+        n = 0
+        for m in self.all_mobs:
+            if getattr(m, 'mob_type', '') != 'training_dummy':
+                continue
+            if getattr(m, 'state', None) == 'dead' or getattr(m, 'health', 0) <= 0:
+                continue
+            n += 1
+        return n
+
+    def _intro_walkthrough_data(self):
+        """Checklist + one short tip for intro. None if not on intro level."""
         if not intro_ops.is_intro_level(self):
-            return []
-        sc = intro_ops.STARTER_CHEST_TILES
-        opened_starter = False
-        oc = getattr(self, 'opened_chests', set())
-        for sx, sy in sc:
-            if intro_ops.chest_storage_key(self.current_level_name, sx, sy) in oc:
-                opened_starter = True
-                break
-        if not opened_starter:
-            return [
-                'Movement: WASD or arrow keys queue one tile at a time; a yellow path shows your upcoming steps.',
-                'Lore: these vaults were built to train and bury legions — stone does not forget who passed.',
-                'Stand beside the supply chest and press G to open it. You start with nothing; your class kit waits inside.',
-            ]
-        live = sum(
-            1 for m in self.all_mobs
-            if getattr(m, 'state', None) != 'dead' and getattr(m, 'health', 0) > 0
-        )
-        if live > 0:
-            return [
-                'Press F with a hotbar slot selected (1–8) to drink potions or to equip and swap weapons, armor, and shield.',
-                'E / I: full inventory — drag items to equipment slots or onto the hotbar; F still acts on the highlighted slot.',
-                'Space: attack. The relics “choose” a foe: the closest enemy inside your weapon range becomes your target.',
-                'Watch the outline: green means in range, red means too far. Click a monster to pin it; click empty floor to hand targeting back to the vault’s instinct.',
-                'Lore: sentinels and straw targets alike were hung here so recruits would learn range before the real dark woke up.',
-                'Destroy the straw target; the forward seal stays shut until it falls.',
-            ]
-        return [
-            'Lore: the threshold you cross is only the outer lip of something hungrier — the dungeon deepens with every floor.',
-            'The way is open. Step into the purple exit when you are ready; greater gates and a true boss still lie ahead.',
+            return None
+        starter = self._intro_starter_chest_opened()
+        weapon = self.inventory.get_effective_weapon_item_id() is not None
+        dummies = self._live_training_dummy_count()
+        dummy_clear = dummies == 0
+        skill_done = len(self.purchased_skill_nodes) >= 1
+        door = bool(self.level_exit_open)
+
+        objectives = [
+            ('Open the supply chest (G beside it)', starter),
+            ('Equip a weapon: 1–8 then F', weapon),
+            ('Defeat the straw target (Space)', dummy_clear),
+            ('Unlock a skill (E → Skills tab)', skill_done),
+            ('Leave through the purple exit', door),
         ]
+
+        tip = ''
+        if not starter:
+            if self._adjacent_unopened_chest_tile():
+                tip = ''
+            else:
+                tip = 'WASD / arrows: queue moves — follow the yellow path to the chest.'
+        elif not weapon:
+            tip = 'Open inventory (E/I), drag a weapon to the hotbar, then 1–8 and F.'
+        elif dummies > 0:
+            tip = 'Space: attack. Green outline = in range; red = too far. Click to pin a target.'
+        elif not skill_done:
+            tip = 'You leveled up — press E, open the Skills tab, and unlock a node to open the exit.'
+        elif door:
+            tip = 'Step onto the purple exit tiles to leave the training vault.'
+
+        return {'objectives': objectives, 'tip': tip}
+
+    def _draw_chest_interact_prompt(self):
+        """Large on-world hint when standing next to an unopened chest."""
+        pos = self._adjacent_unopened_chest_tile()
+        if pos is None:
+            return
+        cx, cy = pos
+        rect = pg.Rect(cx * TILESIZE, cy * TILESIZE, TILESIZE, TILESIZE)
+        scr = self.camera.apply_rect(rect)
+        if scr.bottom < -8 or scr.top > HEIGHT + 8:
+            return
+        pulse = 0.88 + 0.12 * math.sin(pg.time.get_ticks() / 280.0)
+        font = pg.font.Font(pg.font.match_font('arial'), 22)
+        main = font.render('Press G to open', True, GOLD)
+        sub = pg.font.Font(pg.font.match_font('arial'), 14).render('chest', True, UI_TEXT_MUTED)
+        pad_x, pad_y = 14, 8
+        bw = max(main.get_width(), sub.get_width()) + pad_x * 2
+        bh = main.get_height() + sub.get_height() + pad_y * 2 + 4
+        bx = scr.centerx - bw // 2
+        by = scr.top - bh - 10
+        by = max(4, by)
+        bg = pg.Surface((bw, bh), pg.SRCALPHA)
+        fill = (18, 22, 32, int(220 * pulse))
+        bg.fill(fill)
+        pg.draw.rect(bg, (int(200 * pulse), int(175 * pulse), int(90 * pulse)), bg.get_rect(), 2)
+        bg.blit(main, (pad_x, pad_y))
+        bg.blit(sub, (pad_x + (main.get_width() - sub.get_width()) // 2, pad_y + main.get_height() + 2))
+        self.screen.blit(bg, (bx, by))
+
+    def _draw_intro_walkthrough_panel(self):
+        """Compact checklist + one short tip (replaces long tutorial wall of text)."""
+        data = self._intro_walkthrough_data()
+        if data is None:
+            return
+        font = pg.font.Font(pg.font.match_font('arial'), 16)
+        font_sm = pg.font.Font(pg.font.match_font('arial'), 14)
+        pad = 12
+        line_h = 20
+        title_surf = font.render('Training', True, GOLD)
+        tip = (data.get('tip') or '').strip()
+        tip_wrapped = self._wrap_ui_font_lines(font_sm, tip, 268) if tip else []
+        n_obj = len(data['objectives'])
+        tip_block_h = 0
+        if tip_wrapped:
+            tip_block_h = 8 + 18 + len(tip_wrapped) * 18
+        box_w = 292
+        box_h = pad * 2 + title_surf.get_height() + 8 + n_obj * line_h + tip_block_h
+        surf = pg.Surface((box_w, box_h), pg.SRCALPHA)
+        surf.fill((14, 16, 24, 215))
+        pg.draw.rect(surf, (100, 110, 140), surf.get_rect(), 1)
+        y = pad
+        surf.blit(title_surf, (pad, y))
+        y += title_surf.get_height() + 8
+        for label, done in data['objectives']:
+            mark = '[x]' if done else '[ ]'
+            col = (110, 200, 130) if done else UI_TEXT_MUTED
+            surf.blit(font_sm.render(f'{mark} {label}', True, col), (pad, y))
+            y += line_h
+        if tip_wrapped:
+            y += 6
+            surf.blit(font_sm.render('Now:', True, UI_TEXT_BRIGHT), (pad, y))
+            y += 18
+            for tw in tip_wrapped:
+                surf.blit(font_sm.render(tw, True, UI_TEXT_BRIGHT), (pad, y))
+                y += 18
+        x0 = HUD_PADDING
+        y0 = min(248, HEIGHT - box_h - (SLOT_SIZE + 4 + 2 * 22 + 24))
+        y0 = max(HUD_PADDING, y0)
+        self.screen.blit(surf, (x0, y0))
 
     def _draw_world_chests(self):
         if not hasattr(self, 'map'):
@@ -1122,31 +1243,6 @@ class Game:
                 ix = scr.centerx - 4
                 iy = scr.centery - 6
                 pg.draw.rect(self.screen, (40, 32, 22), (ix, iy, 8, 10))
-
-    def _draw_intro_tutorial_overlay(self):
-        lines = self._intro_tutorial_lines()
-        if not lines:
-            return
-        font = pg.font.Font(pg.font.match_font('arial'), 16)
-        pad = 12
-        max_w = min(WIDTH - 2 * HUD_PADDING, 820)
-        wrapped = []
-        for raw in lines:
-            wrapped.extend(self._wrap_ui_font_lines(font, raw, max_w - 2 * pad))
-        line_h = font.get_height() + 4
-        box_h = pad * 2 + len(wrapped) * line_h
-        box = pg.Surface((max_w, box_h), pg.SRCALPHA)
-        box.fill((12, 14, 22, 210))
-        pg.draw.rect(box, (130, 140, 170), box.get_rect(), 1)
-        y = pad
-        for ln in wrapped:
-            box.blit(font.render(ln, True, UI_TEXT_BRIGHT), (pad, y))
-            y += line_h
-        bx = (WIDTH - max_w) // 2
-        # Leave room for two-line hotbar hints below slots
-        by = HEIGHT - box_h - HUD_PADDING - (SLOT_SIZE + 4 + 2 * (font.get_height() + 5) + 12)
-        by = max(HUD_PADDING, by)
-        self.screen.blit(box, (bx, by))
 
     def _slot_bg_for_item(self, item_id):
         if not item_id or item_id not in ITEM_DEFS:
@@ -1442,6 +1538,17 @@ class Game:
         elif self.inventory_tab == 'skills':
             sy = content_top
             cdef = get_class_def(self.player_class_id) or get_class_def(DEFAULT_CLASS_ID)
+            # Skills tab hides the right inventory column — use that space for a large tree on the right.
+            skills_sidebar_w = 292
+            tree_margin_r = 20
+            tree_left = left_x + skills_sidebar_w + 14
+            tree_right = panel_x + panel_w - tree_margin_r
+            tree_w = max(420, tree_right - tree_left)
+            font_tree_name = pg.font.Font(pg.font.match_font('arial'), 17)
+            font_tree_meta = pg.font.Font(pg.font.match_font('arial'), 14)
+            node_w, node_h = 196, 92
+            row_step = 132
+
             self.screen.blit(font.render("Skills", True, GOLD), (left_x, sy))
             sy += 28
             need_xp = xp_for_next_level(self.player_level)
@@ -1454,15 +1561,14 @@ class Game:
                 (left_x, sy),
             )
             sy += 24
-            self.screen.blit(
-                font_sm.render(
-                    "Unlock nodes with points. Tier pages are based on prerequisite depth.",
-                    True,
-                    UI_TEXT_MUTED,
-                ),
-                (left_x, sy),
-            )
-            sy += 26
+            for ln in self._wrap_ui_font_lines(
+                font_sm,
+                "Unlock nodes with points. Tier pages are based on prerequisite depth.",
+                skills_sidebar_w - 4,
+            ):
+                self.screen.blit(font_sm.render(ln, True, UI_TEXT_MUTED), (left_x, sy))
+                sy += 18
+            sy += 8
 
             nodes = list(cdef.get('skill_nodes', []))
             node_map = {n['id']: n for n in nodes}
@@ -1494,17 +1600,25 @@ class Game:
             start = self.skill_tree_page * rows_per_page
             shown_depths = depths[start:start + rows_per_page]
 
-            tree_x = left_x + 10
-            tree_w = max(260, inv_x - left_x - 36)
-            row_step = 100
-            row_top = sy + 24
+            # Tree panel: keep full height; inset top so nodes (centered on row Y) are never clipped.
+            tree_top = content_top + 6
+            tree_bottom = panel_y + panel_h - 28
+            tree_h = max(220, tree_bottom - tree_top)
+            tree_bg = pg.Rect(tree_left - 10, tree_top, tree_w + 20, tree_h)
+            pg.draw.rect(self.screen, (22, 24, 30), tree_bg)
+            pg.draw.rect(self.screen, (72, 78, 98), tree_bg, 1)
+
+            n_rows = len(shown_depths)
+            block_h = (n_rows - 1) * row_step + node_h
+            pad_top = max(14, (tree_bg.height - block_h) // 2)
+            row_top = tree_bg.top + pad_top + node_h // 2
             centers = {}
             for ridx, d in enumerate(shown_depths):
                 row_nodes = depth_buckets.get(d, [])
                 ct = max(1, len(row_nodes))
                 y = row_top + ridx * row_step
                 for i, n in enumerate(row_nodes):
-                    x = tree_x + int((i + 0.5) * tree_w / ct)
+                    x = tree_left + int((i + 0.5) * tree_w / ct)
                     centers[n['id']] = (x, y)
 
             for nid, (x, y) in centers.items():
@@ -1515,7 +1629,7 @@ class Game:
                     rx, ry = centers[req]
                     learned_link = req in self.purchased_skill_nodes
                     lc = (120, 180, 130) if learned_link else (95, 98, 115)
-                    pg.draw.line(self.screen, lc, (rx, ry), (x, y), 3)
+                    pg.draw.line(self.screen, lc, (rx, ry), (x, y), 4)
 
             for nid, (x, y) in centers.items():
                 n = node_map[nid]
@@ -1527,34 +1641,34 @@ class Game:
                     self.purchased_skill_nodes,
                     self.skill_points,
                 )
-                r = pg.Rect(x - 72, y - 34, 144, 68)
+                r = pg.Rect(x - node_w // 2, y - node_h // 2, node_w, node_h)
                 if owned:
                     bg = (58, 96, 68); bd = (145, 210, 160)
                 elif can:
                     bg = (56, 70, 96) if r.collidepoint(mouse_pos) else (44, 56, 76); bd = (140, 170, 220)
                 else:
                     bg = (42, 44, 52); bd = (90, 95, 112)
-                pg.draw.rect(self.screen, bg, r, border_radius=8)
-                pg.draw.rect(self.screen, bd, r, 2, border_radius=8)
-                self.screen.blit(font_sm.render(n['name'], True, WHITE), (r.x + 8, r.y + 8))
+                pg.draw.rect(self.screen, bg, r, border_radius=10)
+                pg.draw.rect(self.screen, bd, r, 2, border_radius=10)
+                self.screen.blit(font_tree_name.render(n['name'], True, WHITE), (r.x + 10, r.y + 10))
                 sb = n.get('stat_bonus', {})
                 bonus_txt = "  ".join([f"+{v} {k[:3].upper()}" for k, v in sb.items()]) if sb else "No bonus"
-                self.screen.blit(font_sm.render(bonus_txt, True, GOLD), (r.x + 8, r.y + 27))
+                self.screen.blit(font_tree_meta.render(bonus_txt, True, GOLD), (r.x + 10, r.y + 34))
                 req_txt = f"Lv.{n.get('min_level', 1)}"
                 if n.get('requires'):
                     req_txt += "  req"
-                self.screen.blit(font_sm.render(req_txt, True, UI_TEXT_MUTED), (r.x + 8, r.y + 46))
+                self.screen.blit(font_tree_meta.render(req_txt, True, UI_TEXT_MUTED), (r.x + 10, r.y + 60))
                 self.inv_slot_rects.append((r, 'skill_node', nid))
 
-            pager_y = row_top + rows_per_page * row_step - 12
-            prev_r = pg.Rect(left_x + 6, pager_y, 80, 28)
-            next_r = pg.Rect(left_x + 92, pager_y, 80, 28)
+            pager_y = panel_y + panel_h - 46
+            prev_r = pg.Rect(left_x, pager_y, 80, 30)
+            next_r = pg.Rect(left_x + 88, pager_y, 80, 30)
             pg.draw.rect(self.screen, (48, 50, 58), prev_r)
             pg.draw.rect(self.screen, (95, 98, 115), prev_r, 1)
             pg.draw.rect(self.screen, (48, 50, 58), next_r)
             pg.draw.rect(self.screen, (95, 98, 115), next_r, 1)
-            self.screen.blit(font_sm.render("Prev", True, UI_TEXT_BRIGHT), (prev_r.x + 22, prev_r.y + 6))
-            self.screen.blit(font_sm.render("Next", True, UI_TEXT_BRIGHT), (next_r.x + 22, next_r.y + 6))
+            self.screen.blit(font_sm.render("Prev", True, UI_TEXT_BRIGHT), (prev_r.x + 22, prev_r.y + 7))
+            self.screen.blit(font_sm.render("Next", True, UI_TEXT_BRIGHT), (next_r.x + 22, next_r.y + 7))
             self.inv_slot_rects.append((prev_r, 'skill_page_prev', 0))
             self.inv_slot_rects.append((next_r, 'skill_page_next', 0))
             self.screen.blit(
@@ -1695,6 +1809,48 @@ class Game:
                 (shop_x, sy),
             )
             sy += 24
+            self.screen.blit(font_md.render("Sell to broker", True, GOLD), (shop_x, sy))
+            sy += 26
+            sell_st = getattr(self.inventory, '_shop_sell_staged', None)
+            sell_data = None
+            if sell_st:
+                sm = sell_st.get('meta') or {}
+                nc = int(sell_st['count'])
+                sell_data = pack_slot(
+                    sell_st['item_id'],
+                    nc,
+                    sm if (nc == 1 and sm) else None,
+                )
+            sell_row_y = sy
+            is_sell_drag = self.inv_dragging and self.inv_dragging[0] == 'shop_sell_slot'
+            sell_ir = self.draw_slot(shop_x, sell_row_y, sell_data, dimmed=is_sell_drag)
+            self.inv_slot_rects.append((sell_ir, 'shop_sell_slot', 0))
+            sell_btn = pg.Rect(shop_x + SLOT_SIZE + 10, sell_row_y + 11, 108, 30)
+            pg.draw.rect(self.screen, (72, 92, 72), sell_btn)
+            pg.draw.rect(self.screen, GOLD, sell_btn, 2)
+            sell_lbl = font_sm.render("Sell", True, UI_TEXT_BRIGHT)
+            self.screen.blit(
+                sell_lbl,
+                (sell_btn.x + (sell_btn.width - sell_lbl.get_width()) // 2, sell_btn.y + 7),
+            )
+            self.inv_slot_rects.append((sell_btn, 'shop_sell_btn', 0))
+            sell_preview = (
+                player_shop_system.coins_for_sell_item(sell_st['item_id'], sell_st['count'])
+                if sell_st
+                else 0
+            )
+            sell_hint_x = sell_btn.right + 12
+            if sell_st:
+                self.screen.blit(
+                    font_sm.render(f"Value: {sell_preview} coins", True, GOLD),
+                    (sell_hint_x, sell_row_y + 6),
+                )
+            else:
+                self.screen.blit(
+                    font_sm.render("Drag items here, then Sell", True, UI_TEXT_MUTED),
+                    (sell_hint_x, sell_row_y + 6),
+                )
+            sy = sell_row_y + SLOT_SIZE + 18
             text_col_x = shop_x + SLOT_SIZE + 12
             text_col_w = max(80, shop_inner_w - SLOT_SIZE - 20)
             buy_w = min(max(text_col_w, 120), 260)
@@ -1711,8 +1867,6 @@ class Game:
                     break
                 ir = self.draw_slot(shop_x, row_top, (item_id, 1))
                 self.inv_slot_rects.append((ir, 'shop_item', item_id))
-                if ir.collidepoint(mouse_pos):
-                    hovered_item_id = item_id
                 tx = text_col_x
                 ny = row_top
                 name_s = font_md.render(idef.get('name', item_id), True, UI_TEXT_BRIGHT)
@@ -1960,6 +2114,12 @@ class Game:
         desc = item.get('description', '')
         if desc:
             lines.append(desc)
+        if item_id != '__player_stats__':
+            sv = int(item.get('sell', 0))
+            if sv > 0:
+                lines.append(f"Sells for: {sv} coins each")
+            elif item_id == 'gold_coin':
+                lines.append("Not sold for coins")
         salv = item.get('salvage')
         if show_salvage and salv:
             lines.append("Salvage (Shift+right-click):")
@@ -2055,16 +2215,22 @@ class Game:
                         self.inventory.return_craft_staging()
                     if self.inventory_tab == 'upgrade':
                         self.inventory.return_upgrade_staging()
+                    if self.inventory_tab == 'shop':
+                        self.inventory.return_shop_sell_staging()
                     self.inventory_tab = 'character'
                 elif index == 'skills':
                     if self.inventory_tab == 'craft':
                         self.inventory.return_craft_staging()
                     if self.inventory_tab == 'upgrade':
                         self.inventory.return_upgrade_staging()
+                    if self.inventory_tab == 'shop':
+                        self.inventory.return_shop_sell_staging()
                     self.inventory_tab = 'skills'
                 elif index == 'craft':
                     if self.inventory_tab == 'upgrade':
                         self.inventory.return_upgrade_staging()
+                    if self.inventory_tab == 'shop':
+                        self.inventory.return_shop_sell_staging()
                     self.inventory_tab = 'craft'
                     self._sync_discovered_recipes_from_inventory()
                 elif index == 'shop':
@@ -2076,6 +2242,8 @@ class Game:
                 elif index == 'upgrade':
                     if self.inventory_tab == 'craft':
                         self.inventory.return_craft_staging()
+                    if self.inventory_tab == 'shop':
+                        self.inventory.return_shop_sell_staging()
                     self.inventory_tab = 'upgrade'
                 return
             if source == 'stats_toggle':
@@ -2102,6 +2270,23 @@ class Game:
                 return
             if source == 'player_shop_buy':
                 player_shop_system.try_buy_player_listing(self, index)
+                return
+            if source == 'shop_sell_btn':
+                player_shop_system.try_sell_staged_item(self)
+                self.save_inventory_state()
+                return
+            if source == 'shop_sell_slot':
+                st = getattr(self.inventory, '_shop_sell_staged', None)
+                if st:
+                    sm = st.get('meta') or {}
+                    self.inv_dragging = (
+                        'shop_sell_slot',
+                        0,
+                        st['item_id'],
+                        st['count'],
+                        sm,
+                    )
+                    self.inv_selected = hit
                 return
             if source == 'upgrade_btn':
                 ok, _ = try_finish_infusion(self.inventory)
@@ -2194,6 +2379,95 @@ class Game:
         if (drag_src, drag_idx) == (drop_src, drop_idx):
             self.inv_dragging = None
             return
+
+        if self.inventory_tab == 'shop':
+            if drag_src == 'shop_sell_slot' and drop_src == 'inv':
+                st = getattr(self.inventory, '_shop_sell_staged', None)
+                if not st:
+                    self.inv_dragging = None
+                    return
+                drop_data = self.inventory.get_slot(drop_idx)
+                if drop_data is None:
+                    self.inventory.set_slot(
+                        drop_idx, st['item_id'], st['count'],
+                        meta=st.get('meta') if st.get('meta') else None,
+                    )
+                    self.inventory._shop_sell_staged = None
+                    self.save_inventory_state()
+                    self.inv_dragging = None
+                    return
+                di, dc, dm = unpack_slot(drop_data)
+                self.inventory.set_slot(
+                    drop_idx, st['item_id'], st['count'],
+                    meta=st.get('meta') if st.get('meta') else None,
+                )
+                self.inventory._shop_sell_staged = {'item_id': di, 'count': dc, 'meta': dm or {}}
+                self.save_inventory_state()
+                self.inv_dragging = None
+                return
+            if drag_src == 'shop_sell_slot' and drop_src == 'hotbar':
+                st = getattr(self.inventory, '_shop_sell_staged', None)
+                if not st:
+                    self.inv_dragging = None
+                    return
+                hb = self.inventory.get_hotbar_slot(drop_idx)
+                if hb is None:
+                    self.inventory.set_hotbar_slot(
+                        drop_idx, st['item_id'], st['count'],
+                        meta=st.get('meta') if st.get('meta') else None,
+                    )
+                    self.inventory._shop_sell_staged = None
+                    self.save_inventory_state()
+                    self.inv_dragging = None
+                    return
+                di, dc, dm = unpack_slot(hb)
+                self.inventory.set_hotbar_slot(
+                    drop_idx, st['item_id'], st['count'],
+                    meta=st.get('meta') if st.get('meta') else None,
+                )
+                self.inventory._shop_sell_staged = {'item_id': di, 'count': dc, 'meta': dm or {}}
+                self.save_inventory_state()
+                self.inv_dragging = None
+                return
+            if drag_src in ('inv', 'hotbar') and drop_src == 'shop_sell_slot':
+                s = (
+                    self.inventory.get_slot(drag_idx)
+                    if drag_src == 'inv'
+                    else self.inventory.get_hotbar_slot(drag_idx)
+                )
+                if not s:
+                    self.inv_dragging = None
+                    return
+                iid, ic, im = unpack_slot(s)
+                if iid == 'gold_coin':
+                    self.inv_dragging = None
+                    return
+                self.inventory.return_shop_sell_staging()
+                if drag_src == 'inv':
+                    self.inventory.set_slot(drag_idx, None, 0)
+                else:
+                    self.inventory.set_hotbar_slot(drag_idx, None, 0)
+                self.inventory._shop_sell_staged = {'item_id': iid, 'count': ic, 'meta': im or {}}
+                self.save_inventory_state()
+                self.inv_dragging = None
+                return
+            if drag_src == 'equip' and drop_src == 'shop_sell_slot':
+                slot = drag_idx
+                w = self.inventory.equipment.get(slot)
+                if not w:
+                    self.inv_dragging = None
+                    return
+                if w == 'gold_coin':
+                    self.inv_dragging = None
+                    return
+                em = dict(self.inventory.equipment_meta.get(slot, {}))
+                self.inventory.return_shop_sell_staging()
+                self.inventory.equipment[slot] = None
+                self.inventory.equipment_meta.pop(slot, None)
+                self.inventory._shop_sell_staged = {'item_id': w, 'count': 1, 'meta': em}
+                self.save_inventory_state()
+                self.inv_dragging = None
+                return
 
         if self.inventory_tab == 'craft':
             if drag_src == 'inv' and drop_src == 'craft':
