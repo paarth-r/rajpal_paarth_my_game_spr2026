@@ -339,11 +339,11 @@
         "stackable": false,
         "max_stack": 1,
         "description": "A staff crackling with ancient energy.",
-        "attack_range_tiles": 10,
-        "base_damage": 40,
+        "attack_range_tiles": 6,
+        "base_damage": 26,
         "scaling_stat": "intelligence",
-        "scaling_factor": 0.7,
-        "attack_speed_bonus": -20,
+        "scaling_factor": 0.48,
+        "attack_speed_bonus": 35,
         "salvage": [
             {
                 "item_id": "wood_splinter",
@@ -527,11 +527,11 @@
         "stackable": false,
         "max_stack": 1,
         "description": "A compact bow for stalkers. Ranged; favors dexterity.",
-        "attack_range_tiles": 8,
-        "base_damage": 22,
+        "attack_range_tiles": 5,
+        "base_damage": 16,
         "scaling_stat": "dexterity",
-        "scaling_factor": 0.55,
-        "attack_speed_bonus": 0,
+        "scaling_factor": 0.4,
+        "attack_speed_bonus": 45,
         "salvage": [
             {
                 "item_id": "wood_splinter",
@@ -963,11 +963,11 @@
         "stackable": false,
         "max_stack": 1,
         "description": "A staff crackling with ancient energy. Blessing depends on which god's rune tempered it.",
-        "attack_range_tiles": 10,
-        "base_damage": 46,
+        "attack_range_tiles": 6,
+        "base_damage": 30,
         "scaling_stat": "intelligence",
-        "scaling_factor": 0.7,
-        "attack_speed_bonus": -20,
+        "scaling_factor": 0.5,
+        "attack_speed_bonus": 35,
         "salvage": [
             {
                 "item_id": "wood_splinter",
@@ -1265,11 +1265,11 @@
         "stackable": false,
         "max_stack": 1,
         "description": "A stalker's bow. Blessing depends on which god's rune tempered it. Ranged; favors dexterity.",
-        "attack_range_tiles": 8,
-        "base_damage": 25,
+        "attack_range_tiles": 5,
+        "base_damage": 18,
         "scaling_stat": "dexterity",
-        "scaling_factor": 0.55,
-        "attack_speed_bonus": 0,
+        "scaling_factor": 0.42,
+        "attack_speed_bonus": 45,
         "salvage": [
             {
                 "item_id": "wood_splinter",

@@ -22,7 +22,7 @@ PLAYER_MAX_HEALTH = 100
 PLAYER_ATTACK_DAMAGE = 50
 PLAYER_ATTACK_COOLDOWN_MS = 400  # ms after attack ends before next attack allowed (HUD shows this)
 # Ranged attacks (staves and bows) trade damage for safety.
-RANGED_WEAPON_DAMAGE_MULT = 0.7
+RANGED_WEAPON_DAMAGE_MULT = 0.58  # staff / bow final damage modifier (safety vs melee range)
 PROJECTILE_SPEED_PX_PER_SEC = 640
 PROJECTILE_RADIUS_PX = 5
 

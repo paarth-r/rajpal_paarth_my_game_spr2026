@@ -1,15 +1,12 @@
 {
   "slots": [
     [
-      "aug_assassins_grace",
-      1,
-      {
-        "infused_rune": "frost_rune"
-      }
+      "pugio",
+      1
     ],
     [
       "cobweb",
-      7
+      24
     ],
     [
       "iron_scrap",
@@ -17,11 +14,11 @@
     ],
     [
       "assassin_handle_wrap",
-      2
+      9
     ],
     [
-      "pugio",
-      1
+      "wood_splinter",
+      3
     ],
     [
       "string",
@@ -29,26 +26,17 @@
     ],
     [
       "stone_chip",
-      13
+      23
     ],
     [
       "legion_helm",
       1
     ],
-    [
-      "assassins_grace",
-      1
-    ],
-    [
-      "galea",
-      1
-    ],
     null,
     null,
-    [
-      "aug_assassin_shortbow",
-      1
-    ],
+    null,
+    null,
+    null,
     null,
     null,
     null,
@@ -79,13 +67,31 @@
   ],
   "hotbar": [
     [
-      "health_potion",
-      8
+      "aug_assassins_grace",
+      1,
+      {
+        "infused_rune": "frost_rune"
+      }
     ],
-    null,
-    null,
-    null,
-    null,
+    [
+      "aug_assassins_grace",
+      1,
+      {
+        "infused_rune": "storm_rune"
+      }
+    ],
+    [
+      "gold_coin",
+      43
+    ],
+    [
+      "assassin_blade_shard",
+      4
+    ],
+    [
+      "aug_assassin_shortbow",
+      1
+    ],
     null,
     null,
     null
@@ -103,14 +109,220 @@
     }
   },
   "selected_hotbar_index": 0,
-  "player_health": 175,
-  "current_level": "level5.txt",
+  "player_health": 0,
+  "current_level": "level7.txt",
   "mob_states": {
     "level1.txt": [],
     "level2.txt": [],
     "level3.txt": [],
     "level4.txt": [],
-    "level5.txt": []
+    "level5.txt": [],
+    "level6.txt": [],
+    "level7.txt": [
+      {
+        "tile_x": 15,
+        "tile_y": 1,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 43,
+        "tile_y": 1,
+        "health": 230,
+        "state": "inactive",
+        "mob_type": "ghost"
+      },
+      {
+        "tile_x": 17,
+        "tile_y": 2,
+        "health": 150,
+        "state": "inactive",
+        "mob_type": "shadow_assassin"
+      },
+      {
+        "tile_x": 26,
+        "tile_y": 2,
+        "health": 230,
+        "state": "inactive",
+        "mob_type": "ghost"
+      },
+      {
+        "tile_x": 2,
+        "tile_y": 3,
+        "health": 230,
+        "state": "inactive",
+        "mob_type": "ghost"
+      },
+      {
+        "tile_x": 7,
+        "tile_y": 3,
+        "health": 150,
+        "state": "inactive",
+        "mob_type": "shadow_assassin"
+      },
+      {
+        "tile_x": 43,
+        "tile_y": 5,
+        "health": 150,
+        "state": "inactive",
+        "mob_type": "shadow_assassin"
+      },
+      {
+        "tile_x": 21,
+        "tile_y": 6,
+        "health": 230,
+        "state": "inactive",
+        "mob_type": "ghost"
+      },
+      {
+        "tile_x": 26,
+        "tile_y": 6,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 11,
+        "tile_y": 9,
+        "health": 100,
+        "state": "attack",
+        "mob_type": "ghost"
+      },
+      {
+        "tile_x": 39,
+        "tile_y": 9,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 40,
+        "tile_y": 10,
+        "health": 230,
+        "state": "inactive",
+        "mob_type": "ghost"
+      },
+      {
+        "tile_x": 44,
+        "tile_y": 10,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 11,
+        "tile_y": 11,
+        "health": 110,
+        "state": "attack",
+        "mob_type": "ghost"
+      },
+      {
+        "tile_x": 39,
+        "tile_y": 11,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 1,
+        "tile_y": 13,
+        "health": 150,
+        "state": "inactive",
+        "mob_type": "shadow_assassin"
+      },
+      {
+        "tile_x": 21,
+        "tile_y": 13,
+        "health": 150,
+        "state": "inactive",
+        "mob_type": "shadow_assassin"
+      },
+      {
+        "tile_x": 26,
+        "tile_y": 13,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 1,
+        "tile_y": 15,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 1,
+        "tile_y": 17,
+        "health": 230,
+        "state": "inactive",
+        "mob_type": "ghost"
+      },
+      {
+        "tile_x": 17,
+        "tile_y": 17,
+        "health": 230,
+        "state": "inactive",
+        "mob_type": "ghost"
+      },
+      {
+        "tile_x": 41,
+        "tile_y": 17,
+        "health": 230,
+        "state": "inactive",
+        "mob_type": "ghost"
+      },
+      {
+        "tile_x": 26,
+        "tile_y": 18,
+        "health": 150,
+        "state": "inactive",
+        "mob_type": "shadow_assassin"
+      },
+      {
+        "tile_x": 41,
+        "tile_y": 18,
+        "health": 230,
+        "state": "inactive",
+        "mob_type": "ghost"
+      },
+      {
+        "tile_x": 1,
+        "tile_y": 19,
+        "health": 150,
+        "state": "inactive",
+        "mob_type": "shadow_assassin"
+      },
+      {
+        "tile_x": 26,
+        "tile_y": 21,
+        "health": 150,
+        "state": "inactive",
+        "mob_type": "shadow_assassin"
+      },
+      {
+        "tile_x": 1,
+        "tile_y": 22,
+        "health": 150,
+        "state": "inactive",
+        "mob_type": "shadow_assassin"
+      },
+      {
+        "tile_x": 15,
+        "tile_y": 22,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 17,
+        "tile_y": 22,
+        "health": 230,
+        "state": "inactive",
+        "mob_type": "ghost"
+      }
+    ]
   },
   "discovered_recipes": [
     "assassin_shortbow",
@@ -118,14 +330,16 @@
     "woven_cobweb"
   ],
   "player_class_id": "assassin",
-  "player_level": 8,
-  "player_xp": 165,
-  "skill_points": 2,
+  "player_level": 11,
+  "player_xp": 56,
+  "skill_points": 5,
   "purchased_skill_nodes": [
     "ass_blade",
     "ass_dancer",
     "ass_lethal",
     "ass_shadow",
     "ass_survivor"
-  ]
+  ],
+  "opened_chests": [],
+  "intro_exit_unlocked": false
 }
