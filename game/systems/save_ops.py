@@ -162,6 +162,10 @@ def _snapshot_current_level_mobs(self):
 
 
 def save_inventory_state(self):
+    if getattr(self, 'mp_mode', None) == 'client':
+        return False
+    if not getattr(self, 'save_path', None):
+        return False
     try:
         self.mob_states_by_level[self.current_level_name] = self._snapshot_current_level_mobs()
         def _serialize_slot(s):

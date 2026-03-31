@@ -11,6 +11,10 @@ import sys
 import json
 import os
 import math
+import argparse
+import queue
+import socket
+import threading
 from collections import deque
 from os import path
 from settings import *
@@ -44,12 +48,15 @@ from game.systems import progression_ops as progression_system
 from game.systems import player_shop as player_shop_system
 from game.systems import save_ops as save_system
 from game.systems import world_ops as world_system
+from game.mp import sync as mp_sync
+from game.mp.protocol import parse_frames_from_buffer, read_messages, write_message
+from game.mp.session import ClientSession, HostSession, build_welcome
 
 vec = pg.math.Vector2
 
 
 class Game:
-    def __init__(self):
+    def __init__(self, mp_host=False, mp_join=None):
         pg.init()
         # Window and viewport stay fixed; SCALE only zooms (perceived size)
         self.display = pg.display.set_mode((WIDTH, HEIGHT))
@@ -58,6 +65,29 @@ class Game:
         self.clock = pg.time.Clock()
         self.running = True
         self.playing = True
+        self.mp_host_flag = bool(mp_host)
+        self.mp_join_addr = mp_join
+
+    @property
+    def player(self):
+        pl = getattr(self, 'players', None)
+        if not pl:
+            return None
+        ls = int(getattr(self, 'mp_local_slot', 0))
+        if 0 <= ls < len(pl) and pl[ls] is not None:
+            return pl[ls]
+        return pl[0]
+
+    def register_network_mob(self, mob):
+        nid = self._next_network_mob_id
+        self._next_network_mob_id += 1
+        self._mob_by_net_id[nid] = mob
+        return nid
+
+    def unregister_network_mob(self, mob):
+        nid = getattr(mob, 'network_id', 0)
+        if nid and nid in self._mob_by_net_id:
+            del self._mob_by_net_id[nid]
 
     def load_data(self):
         self.game_dir = path.dirname(__file__)
@@ -86,26 +116,6 @@ class Game:
         self.load_level(self.current_level_name, create_player=True)
         self._item_sprite_cache = {}
 
-    def is_walkable(self, col, row):
-        """True if (col, row) is in bounds, not a wall, and not occupied by a mob or player (current or sliding-to)."""
-        if row < 0 or row >= len(self.map.data):
-            return False
-        if col < 0 or col >= len(self.map.data[0]):
-            return False
-        tile = self.map.data[row][col]
-        if tile == '1':
-            return False
-        if tile == 'N' and not self.level_exit_open:
-            return False
-        if (self.player.tile_x, self.player.tile_y) == (col, row):
-            return False
-        if self.player.slide_to_tile is not None and self.player.slide_to_tile == (col, row):
-            return False
-        for mob in self.all_mobs:
-            if (mob.tile_x, mob.tile_y) == (col, row):
-                return False
-        return True
-
     def tile_blocks_line_of_sight(self, col, row):
         """Terrain that blocks mob↔player sight (walls, closed exit gate)."""
         if row < 0 or row >= len(self.map.data):
@@ -126,22 +136,14 @@ class Game:
                 return False
         return True
 
-    def new(self):
-        self.player_class_id = DEFAULT_CLASS_ID
-        self.player_level = 1
-        self.player_xp = 0
-        self.skill_points = 0
-        self.purchased_skill_nodes = set()
-        self.load_data()
-        self._initialize_player_inventory()
+    def _init_common_ui_state(self):
         self.inventory_open = False
         self.manual_target = None
-        # Inventory UI state
-        self.inv_slot_rects = []    # built each frame: list of (pg.Rect, source, index)
-        self.inv_dragging = None    # (source, index, item_id, count[, meta_dict]) while dragging
+        self.inv_slot_rects = []
+        self.inv_dragging = None
         self.inv_drag_offset = (0, 0)
-        self.inv_selected = None    # (source, index) for click-highlight
-        self.inventory_tab = 'character'  # 'character' | 'skills' | 'craft' | 'upgrade' | 'shop'
+        self.inv_selected = None
+        self.inventory_tab = 'character'
         self.stats_dropdown_open = False
         self.craft_selected_recipe_id = None
         self.pause_menu_open = False
@@ -167,19 +169,147 @@ class Game:
         self.chain_lightning_fx = []
         self.death_screen_coins_lost = 0
         self.death_screen_xp_lost = 0
+
+    def _mp_client_connect_and_load(self):
+        host, _, ps = self.mp_join_addr.partition(':')
+        port = int(ps) if ps.strip() else MULTIPLAYER_PORT
+        try:
+            sock = socket.create_connection((host.strip(), port), timeout=15)
+        except OSError as e:
+            print(f'[mp] connect failed: {e}')
+            return False
+        sock.setblocking(True)
+        buf = bytearray()
+        welcome = None
+        try:
+            while welcome is None:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    raise ConnectionError('closed before welcome')
+                buf.extend(chunk)
+                for m in parse_frames_from_buffer(buf):
+                    if m.get('type') == 'welcome':
+                        welcome = m
+                        break
+                if welcome is not None:
+                    break
+        except (ConnectionError, OSError, ValueError) as e:
+            print(f'[mp] handshake failed: {e}')
+            sock.close()
+            return False
+        if welcome.get('version') != MP_PROTOCOL_VERSION:
+            print('[mp] protocol version mismatch')
+            sock.close()
+            return False
+        self.mp_mode = 'client'
+        self.mp_local_slot = int(welcome['slot'])
+        self.game_dir = path.dirname(__file__)
+        self.img_dir = path.join(self.game_dir, 'images')
+        self.levels_dir = path.join(self.game_dir, 'levels')
+        self.saves_dir = path.join(self.game_dir, 'saves')
+        self.wall_img = pg.image.load(path.join(self.img_dir, 'wall_art.png')).convert_alpha()
+        self._item_sprite_cache = {}
+        self.discovered_recipe_ids = set()
+        self.mob_states_by_level = {}
+        self.opened_chests = set()
+        self.intro_exit_unlocked = False
+        self.current_save_name = None
+        self.save_path = None
+        self.inventory = Inventory(INVENTORY_SLOTS)
+        self.level_order = [
+            'intro.txt', 'level1.txt', 'level2.txt', 'level3.txt', 'level4.txt',
+            'level5.txt', 'level6.txt', 'level7.txt', 'level8.txt', 'level9.txt',
+        ]
+        level_name = welcome.get('level') or 'level1.txt'
+        self.current_level_name = level_name
+        self.load_level(level_name, create_player=True, mp_client=True)
+        self.mp_client_session = ClientSession(self, sock)
+        return True
+
+    def new(self):
+        self.players = [None] * MAX_MULTIPLAYERS
+        self.mp_local_slot = 0
+        self._mob_by_net_id = {}
+        self._next_network_mob_id = 1
+        self.mp_mode = None
+        self.mp_host_session = None
+        self.mp_clients = {}
+        self.mp_inbox = queue.Queue()
+        self.mp_disconnect_queue = queue.Queue()
+        self.mp_manual_targets = {}
+        self._mp_tick = 0
+        self._mp_applied_tick = -1
+        self.mp_snap_damage_numbers = []
+        self.mp_snap_chain_fx = []
+        self.mp_pending_send = {'moves': [], 'attack': False, 'clear': False, 'tgt': None}
+        self.mp_client_session = None
+        self.mp_client_lost = False
+        self.mp_latest_snapshot = None
+        self._mp_remote_input = {}
+
+        if self.mp_join_addr:
+            self.player_class_id = DEFAULT_CLASS_ID
+            self.player_level = 1
+            self.player_xp = 0
+            self.skill_points = 0
+            self.purchased_skill_nodes = set()
+            if not self._mp_client_connect_and_load():
+                self.running = False
+                return
+            self._init_common_ui_state()
+            self.state = 'playing'
+            self.run()
+            return
+
+        if self.mp_host_flag:
+            self.mp_mode = 'host'
+            self.mp_host_session = HostSession(self, MULTIPLAYER_PORT)
+
+        self.player_class_id = DEFAULT_CLASS_ID
+        self.player_level = 1
+        self.player_xp = 0
+        self.skill_points = 0
+        self.purchased_skill_nodes = set()
+        self.load_data()
+        self._initialize_player_inventory()
+        self._init_common_ui_state()
         self.state = 'intro'
         self.run()
 
     # save/world/progression methods were extracted to game.systems modules.
 
+    def _mp_host_flush_snapshot(self):
+        if getattr(self, 'mp_mode', None) != 'host' or not self.mp_clients:
+            return
+        self._mp_tick += 1
+        snap = mp_sync.build_snapshot(self, self._mp_tick)
+        for data in self.mp_clients.values():
+            self.mp_host_session.send_to_slot(data['sock'], data['lock'], snap)
+
     def run(self):
         while self.running:
             self.dt = self.clock.tick(FPS) / 1000
+            if getattr(self, 'mp_mode', None) == 'client' and getattr(self, 'mp_client_lost', False):
+                if self.mp_client_session:
+                    try:
+                        self.mp_client_session.close()
+                    except Exception:
+                        pass
+                    self.mp_client_session = None
+                self.mp_client_lost = False
+                self.running = False
+                break
             self.events()
             if self.state == 'intro':
                 self.draw_intro()
+                if getattr(self, 'mp_mode', None) == 'host':
+                    self._mp_poll_host_network()
+                    self._mp_host_flush_snapshot()
             elif self.state == 'death':
                 self.draw_death()
+                if getattr(self, 'mp_mode', None) == 'host':
+                    self._mp_poll_host_network()
+                    self._mp_host_flush_snapshot()
             else:
                 if not self.inventory_open and not self.pause_menu_open:
                     self.update()
@@ -223,6 +353,23 @@ class Game:
                 if self.state == 'death':
                     continue
                 if self.state != 'playing':
+                    continue
+                if getattr(self, 'mp_mode', None) == 'client':
+                    if event.key == pg.K_ESCAPE:
+                        self.running = False
+                        continue
+                    if event.key == pg.K_SPACE:
+                        self.mp_pending_send['attack'] = True
+                    if event.key == pg.K_DELETE or event.key == pg.K_BACKSPACE:
+                        self.mp_pending_send['clear'] = True
+                    if event.key in (pg.K_w, pg.K_UP):
+                        self.mp_pending_send['moves'].append((0, -1))
+                    if event.key in (pg.K_s, pg.K_DOWN):
+                        self.mp_pending_send['moves'].append((0, 1))
+                    if event.key in (pg.K_a, pg.K_LEFT):
+                        self.mp_pending_send['moves'].append((-1, 0))
+                    if event.key in (pg.K_d, pg.K_RIGHT):
+                        self.mp_pending_send['moves'].append((1, 0))
                     continue
                 if event.key == pg.K_ESCAPE:
                     if self.pause_menu_open:
@@ -339,6 +486,9 @@ class Game:
                     continue
                 if self.state != 'playing' or self.inventory_open:
                     continue
+                if getattr(self, 'mp_mode', None) == 'client':
+                    self._mp_client_click_target(event.pos)
+                    continue
                 self._handle_click_target(event.pos)
 
     def quit(self):
@@ -349,15 +499,210 @@ class Game:
     def add_damage_number(self, world_pos, amount, color=(255, 60, 60)):
         """Queue a floating number in world space (red damage, green heal, orange burn DoT)."""
         amt = int(max(1, round(float(amount))))
+        pos = vec(world_pos[0], world_pos[1] - TILESIZE * 0.45)
         self.damage_numbers.append({
-            'pos': vec(world_pos[0], world_pos[1] - TILESIZE * 0.45),
+            'pos': pos,
             'amount': amt,
             'color': color,
             'life_ms': 1000,
             'age_ms': 0,
         })
+        if getattr(self, 'mp_mode', None) == 'host':
+            self.mp_snap_damage_numbers.append({
+                'x': float(pos.x),
+                'y': float(pos.y),
+                'a': amt,
+                'c': [int(color[0]), int(color[1]), int(color[2])],
+                'l': 1000,
+                'g': 0,
+            })
+
+    def _mp_poll_host_network(self):
+        if not self.mp_host_session:
+            return
+        while True:
+            try:
+                conn = self.mp_host_session.pending_connections.get_nowait()
+            except queue.Empty:
+                break
+            self._mp_accept_client(conn)
+        merged_in = {}
+        while True:
+            try:
+                slot, msg = self.mp_inbox.get_nowait()
+            except queue.Empty:
+                break
+            if msg.get('type') == 'input':
+                acc = merged_in.setdefault(
+                    slot, {'moves': [], 'attack': False, 'clear': False, 'tgt': None}
+                )
+                if msg.get('clear'):
+                    acc['moves'].clear()
+                acc['moves'].extend(msg.get('moves') or [])
+                if msg.get('attack'):
+                    acc['attack'] = True
+                if 'tgt' in msg:
+                    acc['tgt'] = msg['tgt']
+        for slot, acc in merged_in.items():
+            self._mp_remote_input[slot] = acc
+        while True:
+            try:
+                slot = self.mp_disconnect_queue.get_nowait()
+            except queue.Empty:
+                break
+            self._mp_eject_client(slot)
+
+    def _mp_accept_client(self, conn):
+        slot = None
+        for i in range(1, MAX_MULTIPLAYERS):
+            if self.players[i] is None:
+                slot = i
+                break
+        if slot is None:
+            try:
+                conn.close()
+            except OSError:
+                pass
+            return
+        if self.players[0] is None:
+            try:
+                conn.close()
+            except OSError:
+                pass
+            return
+        ox, oy = self.players[0].tile_x, self.players[0].tile_y
+        cx, cy = mp_sync.find_spawn_tile(self, ox, oy)
+        self.players[slot] = Player(self, cx, cy)
+        self.players[slot].mp_slot = slot
+        try:
+            write_message(conn, build_welcome(slot, self.current_level_name))
+        except OSError:
+            self.players[slot].kill()
+            self.players[slot] = None
+            try:
+                conn.close()
+            except OSError:
+                pass
+            return
+        lk = threading.Lock()
+        self.mp_clients[slot] = {'sock': conn, 'lock': lk}
+        self.mp_host_session.start_reader(conn, slot)
+
+    def _mp_eject_client(self, slot):
+        data = self.mp_clients.pop(slot, None)
+        if data:
+            try:
+                data['sock'].close()
+            except OSError:
+                pass
+        p = self.players[slot] if 0 <= slot < len(self.players) else None
+        if p is not None:
+            p.kill()
+            self.players[slot] = None
+        self.mp_manual_targets.pop(slot, None)
+        self._mp_remote_input.pop(slot, None)
+
+    def _mp_apply_host_remote_inputs(self):
+        for slot, msg in list(self._mp_remote_input.items()):
+            p = self.players[slot] if slot < len(self.players) else None
+            if p is None:
+                continue
+            if msg.get('clear'):
+                p.clear_move_queue()
+            for m in (msg.get('moves') or [])[:PLAYER_MOVE_QUEUE_MAX]:
+                if isinstance(m, (list, tuple)) and len(m) >= 2:
+                    p.queue_move(int(m[0]), int(m[1]))
+            if msg.get('attack'):
+                p.attack()
+            tid = msg.get('tgt')
+            if tid is None:
+                self.mp_manual_targets.pop(slot, None)
+            else:
+                mob = self._mob_by_net_id.get(int(tid))
+                self.mp_manual_targets[slot] = mob if mob is not None else None
+        self._mp_remote_input.clear()
+
+    def _mp_respawn_remote_slot(self, slot):
+        p = self.players[slot]
+        if p is None or self.checkpoint_tile is None:
+            return
+        cx, cy = mp_sync.find_spawn_tile(self, self.checkpoint_tile[0], self.checkpoint_tile[1])
+        p.clear_move_queue()
+        p.move_state = 'idle'
+        p.slide_from = None
+        p.slide_to = None
+        p.slide_to_tile = None
+        p.attacking = False
+        p.attack_hit_dealt = False
+        p.tile_x, p.tile_y = cx, cy
+        p.pos = vec(cx * TILESIZE + TILESIZE / 2, cy * TILESIZE + TILESIZE / 2)
+        p.hit_rect.center = p.pos
+        p.rect.center = p.hit_rect.center
+        p.max_health = p.get_effective_max_health()
+        p.health = p.max_health
+
+    def _mp_client_update(self):
+        if getattr(self, 'mp_client_lost', False):
+            return
+        snap = getattr(self, 'mp_latest_snapshot', None)
+        if snap and snap.get('tick', 0) != self._mp_applied_tick:
+            mp_sync.apply_snapshot(self, snap)
+            self._mp_applied_tick = snap.get('tick', 0)
+        dt_ms = int(self.dt * 1000)
+        live = []
+        for dn in self.damage_numbers:
+            dn['age_ms'] += dt_ms
+            dn['pos'].y -= 24 * self.dt
+            if dn['age_ms'] < dn['life_ms']:
+                live.append(dn)
+        self.damage_numbers = live
+        if self.chain_lightning_fx:
+            live_fx = []
+            for fx in self.chain_lightning_fx:
+                fx['age_ms'] = fx.get('age_ms', 0) + dt_ms
+                if fx['age_ms'] < fx['life_ms']:
+                    live_fx.append(fx)
+            self.chain_lightning_fx = live_fx
+        if self.mp_client_session:
+            self.mp_client_session.send({
+                'type': 'input',
+                'moves': self.mp_pending_send['moves'][:PLAYER_MOVE_QUEUE_MAX],
+                'attack': bool(self.mp_pending_send['attack']),
+                'clear': bool(self.mp_pending_send['clear']),
+                'tgt': self.mp_pending_send['tgt'],
+            })
+        self.mp_pending_send['moves'] = []
+        self.mp_pending_send['attack'] = False
+        self.mp_pending_send['clear'] = False
+        if self.player is not None:
+            self.camera.update(self.player)
+
+    def add_chain_lightning(self, world_a, world_b):
+        self.chain_lightning_fx.append({
+            'a': vec(world_a[0], world_a[1]),
+            'b': vec(world_b[0], world_b[1]),
+            'age_ms': 0,
+            'life_ms': 400,
+        })
+        if getattr(self, 'mp_mode', None) == 'host':
+            self.mp_snap_chain_fx.append({
+                'ax': float(world_a[0]),
+                'ay': float(world_a[1]),
+                'bx': float(world_b[0]),
+                'by': float(world_b[1]),
+                'g': 0,
+                'l': 400,
+            })
 
     def update(self):
+        if getattr(self, 'mp_mode', None) == 'client':
+            self._mp_client_update()
+            return
+
+        if getattr(self, 'mp_mode', None) == 'host':
+            self._mp_poll_host_network()
+            self._mp_apply_host_remote_inputs()
+
         self.all_sprites.update()
         dt_ms = int(self.dt * 1000)
         live = []
@@ -374,7 +719,14 @@ class Game:
                 if fx['age_ms'] < fx['life_ms']:
                     live_fx.append(fx)
             self.chain_lightning_fx = live_fx
-        if self.player.health <= 0:
+
+        if getattr(self, 'mp_mode', None) == 'host':
+            for i in range(1, MAX_MULTIPLAYERS):
+                p = self.players[i] if i < len(self.players) else None
+                if p is not None and p.health <= 0:
+                    self._mp_respawn_remote_slot(i)
+
+        if self.player is None or self.player.health <= 0:
             self._apply_death_penalties()
             self.state = 'death'
             self.inventory.return_craft_staging()
@@ -389,30 +741,45 @@ class Game:
             intro_ops.refresh_intro_exit_open(self)
         elif not self.level_exit_open and len(live_mobs) == 0:
             self.level_exit_open = True
-        # Keep manual target valid
+        if getattr(self, 'mp_mode', None) == 'host':
+            for sl, mt in list(self.mp_manual_targets.items()):
+                if mt is not None and (
+                    (not mt.alive()) or getattr(mt, 'state', None) == 'dead'
+                ):
+                    self.mp_manual_targets[sl] = None
         if self.manual_target is not None:
             if (not self.manual_target.alive()) or getattr(self.manual_target, 'state', None) == 'dead':
                 self.manual_target = None
-        # Player attack: direct melee hit or projectile launch, depending on weapon type.
-        if self.player.attacking and not self.player.attack_hit_dealt:
-            best = self._get_best_attack_target()
-            if self.player.is_ranged_weapon():
-                if best is not None:
-                    self._spawn_player_projectile(best)
-                    self.player.attack_hit_dealt = True
-            elif best is not None:
-                dmg = self._roll_player_hit_damage()
-                best.hurt(dmg)
-                self.apply_rune_on_hit_effects(best, dmg)
-                self.player.attack_hit_dealt = True
-        player_tile = (self.player.tile_x, self.player.tile_y)
-        if player_tile in self.level_return_tiles:
-            self.go_to_prev_level()
-            return
-        if self.level_exit_open and player_tile in self.level_exit_tiles:
-            self.go_to_next_level()
-            return
-        self.camera.update(self.player)
+        for p in self.players:
+            if p is None:
+                continue
+            if p.attacking and not p.attack_hit_dealt:
+                best = self._get_best_attack_target(attacker=p)
+                if p.is_ranged_weapon():
+                    if best is not None:
+                        self._spawn_player_projectile(best, attacker=p)
+                        p.attack_hit_dealt = True
+                elif best is not None:
+                    dmg = max(1, int(p.get_effective_damage()))
+                    best.hurt(dmg)
+                    self.apply_rune_on_hit_effects(best, dmg, attacker=p)
+                    p.attack_hit_dealt = True
+        for p in self.players:
+            if p is None:
+                continue
+            if (p.tile_x, p.tile_y) in self.level_return_tiles:
+                self.go_to_prev_level()
+                return
+        for p in self.players:
+            if p is None:
+                continue
+            if self.level_exit_open and (p.tile_x, p.tile_y) in self.level_exit_tiles:
+                self.go_to_next_level()
+                return
+        if self.player is not None:
+            self.camera.update(self.player)
+
+        self._mp_host_flush_snapshot()
 
     def draw(self):
         self.screen.fill(BGCOLOR)
@@ -692,6 +1059,13 @@ class Game:
         if self.current_save_name:
             world_surf = font_world.render(f"Active world: {self.current_save_name}", True, GOLD)
             self.screen.blit(world_surf, world_surf.get_rect(center=(WIDTH // 2, panel_y + 176)))
+        if getattr(self, 'mp_mode', None) == 'host' and getattr(self, 'mp_host_session', None):
+            host_surf = font_hint.render(
+                f"LAN host  •  port {self.mp_host_session.port}  •  guests: python main.py --mp-join IP:{self.mp_host_session.port}",
+                True,
+                (130, 190, 255),
+            )
+            self.screen.blit(host_surf, host_surf.get_rect(center=(WIDTH // 2, panel_y + 200)))
 
         btn_w, btn_h = 300, 62
         self.title_start_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 220, btn_w, btn_h)
@@ -2861,6 +3235,24 @@ class Game:
         text_rect.midtop = (x, y)
         self.screen.blit(text_surface, text_rect)
 
+    def _mp_client_click_target(self, mouse_pos):
+        mx, my = mouse_pos
+        clicked = []
+        for mob in self.all_mobs:
+            if getattr(mob, 'state', None) == 'dead':
+                continue
+            screen_rect = self.camera.apply(mob)
+            if screen_rect.collidepoint(mx, my):
+                cx, cy = screen_rect.centerx, screen_rect.centery
+                d_sq = (mx - cx) ** 2 + (my - cy) ** 2
+                clicked.append((d_sq, mob))
+        if clicked:
+            clicked.sort(key=lambda t: t[0])
+            mid = getattr(clicked[0][1], 'network_id', None)
+            self.mp_pending_send['tgt'] = int(mid) if mid else None
+        else:
+            self.mp_pending_send['tgt'] = None
+
     def _handle_click_target(self, mouse_pos):
         """Select nearest clicked mob on screen; click empty space to clear target."""
         mx, my = mouse_pos
@@ -2876,25 +3268,37 @@ class Game:
         if clicked:
             clicked.sort(key=lambda t: t[0])
             self.manual_target = clicked[0][1]
+            if getattr(self, 'mp_mode', None) == 'host':
+                self.mp_manual_targets[0] = self.manual_target
         else:
             self.manual_target = None
+            if getattr(self, 'mp_mode', None) == 'host':
+                self.mp_manual_targets[0] = None
 
-    def _get_best_attack_target(self):
+    def _get_best_attack_target(self, attacker=None):
         """Return manual target if valid/in-range, else nearest in-range live mob.
         Range matches the active weapon's attack_range_tiles (equipped or selected hotbar weapon)."""
-        px, py = self.player.hit_rect.centerx, self.player.hit_rect.centery
+        attacker = attacker or self.player
+        if attacker is None:
+            return None
+        px, py = attacker.hit_rect.centerx, attacker.hit_rect.centery
         best = None
-        pr = self.player.get_effective_attack_range()
+        pr = attacker.get_effective_attack_range()
         if pr <= 0:
             return None
         best_d_sq = pr * pr
-        if self.manual_target is not None:
-            if self.manual_target.alive() and getattr(self.manual_target, 'state', None) != 'dead':
-                mx = self.manual_target.hit_rect.centerx
-                my = self.manual_target.hit_rect.centery
+        man = None
+        if getattr(self, 'mp_mode', None) == 'host':
+            man = self.mp_manual_targets.get(getattr(attacker, 'mp_slot', 0))
+        if man is None and attacker is self.player:
+            man = self.manual_target
+        if man is not None:
+            if man.alive() and getattr(man, 'state', None) != 'dead':
+                mx = man.hit_rect.centerx
+                my = man.hit_rect.centery
                 d_sq = (px - mx) ** 2 + (py - my) ** 2
                 if d_sq <= best_d_sq:
-                    return self.manual_target
+                    return man
         for mob in self.all_mobs:
             if getattr(mob, 'state', None) == 'dead':
                 continue
@@ -2906,24 +3310,28 @@ class Game:
                 best = mob
         return best
 
-    def _spawn_player_projectile(self, target):
+    def _spawn_player_projectile(self, target, attacker=None):
         """Fire a projectile locked to the chosen auto-target."""
-        start = vec(self.player.hit_rect.centerx, self.player.hit_rect.centery)
+        attacker = attacker or self.player
+        start = vec(attacker.hit_rect.centerx, attacker.hit_rect.centery)
         Projectile(
             self,
             start_pos=start,
             target=target,
-            damage=self._roll_player_hit_damage(),
-            max_range_px=self.player.get_effective_attack_range(),
+            damage=max(1, int(attacker.get_effective_damage())),
+            max_range_px=attacker.get_effective_attack_range(),
         )
 
     def _roll_player_hit_damage(self):
         """Base weapon damage (Vulcan burn is DoT on hit, not rolled here)."""
+        if self.player is None:
+            return 1
         dmg = self.player.get_effective_damage()
         return max(1, int(dmg))
 
-    def apply_rune_on_hit_effects(self, primary_mob, damage_dealt):
+    def apply_rune_on_hit_effects(self, primary_mob, damage_dealt, attacker=None):
         """Vulcan burn, Neptune slow, Jupiter chain — always apply when a secondary target exists for chain."""
+        attacker = attacker or self.player
         wid = self.inventory.get_effective_weapon_item_id()
         if not wid or primary_mob is None:
             return
@@ -2949,23 +3357,15 @@ class Game:
             if random.random() < max(0.0, min(1.0, ch)):
                 frac = float(eff.get('damage_fraction', 0.15))
                 heal = max(1, int(damage_dealt * max(0.0, frac)))
-                eff_max = self.player.get_effective_max_health()
-                old_hp = self.player.health
-                self.player.health = min(eff_max, old_hp + heal)
-                if self.player.health > old_hp:
+                eff_max = attacker.get_effective_max_health()
+                old_hp = attacker.health
+                attacker.health = min(eff_max, old_hp + heal)
+                if attacker.health > old_hp:
                     self.add_damage_number(
-                        self.player.hit_rect.center,
-                        self.player.health - old_hp,
+                        attacker.hit_rect.center,
+                        attacker.health - old_hp,
                         color=(120, 220, 160),
                     )
-
-    def add_chain_lightning(self, world_a, world_b):
-        self.chain_lightning_fx.append({
-            'a': vec(world_a[0], world_a[1]),
-            'b': vec(world_b[0], world_b[1]),
-            'age_ms': 0,
-            'life_ms': 400,
-        })
 
     def _apply_jupiter_chain_damage(self, primary_mob, damage_dealt, eff):
         radius = float(eff.get('radius_tiles', 2.0))
@@ -3026,7 +3426,16 @@ Game._get_save_class_name = save_system._get_save_class_name
 
 
 if __name__ == "__main__":
-    g = Game()
+    ap = argparse.ArgumentParser(description='Relictus')
+    ap.add_argument('--mp-host', action='store_true', help='Listen for up to 3 LAN clients (host plays slot 0).')
+    ap.add_argument(
+        '--mp-join',
+        metavar='HOST:PORT',
+        default=None,
+        help=f'Join a host (e.g. 10.0.0.12:{MULTIPLAYER_PORT}). Inventory is host-only.',
+    )
+    args = ap.parse_args()
+    g = Game(mp_host=args.mp_host, mp_join=args.mp_join)
     while g.running:
         g.new()
     pg.quit()

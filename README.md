@@ -6,6 +6,8 @@ Top-down dungeon crawler built with **Python 3** and **Pygame**. The game name a
 
 ```bash
 python main.py
+python main.py --mp-host
+python main.py --mp-join 192.168.1.10:28765
 ```
 
 **Dependency:** `pygame` (install with `pip install pygame`).
@@ -21,7 +23,7 @@ From the title screen, **L** launches `level_editor.py` in a separate process (i
 | `main.py` | `Game` class: event loop, rendering orchestration, HUD, inventory UI, combat hooks, death/intro/pause screens. At import time, many `Game` methods are **replaced** by `game.systems.*` (see [Subsystem binding](#subsystem-binding)). |
 | `settings.py` | Constants: resolution, zoom (`SCALE`), tile size, player/mob/combat timings, colors, HUD/inventory layout keys, death penalties, attribute baselines. |
 | `utils.py` | `Map`, `Camera`, `Spritesheet`, `Cooldown`, grid line-of-sight (`tiles_on_grid_line`), UI helpers (`draw_corner_brackets`, `draw_lightning_bolt`), PNG transparency fix (`key_checkerboard_placeholder`). |
-| `sprites.py` | `Player`, `Mob`, `Wall`, `Projectile`, `DroppedItem`, `Coin`; `MOB_DEFS` from `data/mobs.json`; `roll_mob_drops`, collision helpers. |
+| `sprites.py` | `Player`, `Mob`, `Wall`, `Projectile`, `DroppedItem`, `Coin`, `GhostProjectile`, `GhostDroppedItem`; `iter_scene_players` / `nearest_living_player`; `MOB_DEFS` from `data/mobs.json`; `roll_mob_drops`, collision helpers. |
 | `inventory.py` | `ITEM_DEFS` from `data/items.json`; `Inventory` (bag, hotbar, equipment, craft/upgrade/shop staging); `pack_slot` / `unpack_slot`; weapon stat resolution via `weapons.py`. |
 | `weapons.py` | Ranged vs melee, damage from attrs + scaling, cooldown, range in tiles/px, on-hit / rune blessing resolution and tooltip text. |
 | `crafting.py` | `RECIPES` / `WEAPON_TYPES` from `data/crafting.json`; recipe discovery, staging validation, craft completion, rune infusion rules (`try_finish_infusion`). |
@@ -31,6 +33,9 @@ From the title screen, **L** launches `level_editor.py` in a separate process (i
 | `game/systems/progression_ops.py` | XP gain, skill purchase, mob-kill XP, death penalties, starting gear, skill bonuses on `Game`. |
 | `game/systems/intro_ops.py` | Intro level id, starter chest loot from class, exit gating conditions. |
 | `game/systems/player_shop.py` | `data/player_shop.json` listings; buy/sell with gold coins. |
+| `game/mp/protocol.py` | Length-prefixed JSON TCP framing (`parse_frames_from_buffer`, `read_messages`, `write_message`). |
+| `game/mp/session.py` | `HostSession` (accept + reader threads), `ClientSession`, `build_welcome`. |
+| `game/mp/sync.py` | `build_snapshot` / `apply_snapshot`, `find_spawn_tile`, entity sync for clients. |
 | `level_editor.py` | Standalone editor for `levels/*.txt` (same tile semantics as `load_level`). |
 | `data/` | `items.json`, `mobs.json`, `classes.json`, `crafting.json`, `player_shop.json`, etc. |
 | `levels/` | ASCII maps consumed by `Map` / `load_level`. |
@@ -374,3 +379,46 @@ flowchart TD
 ```
 
 For questions about a **specific function**, search the name in the file listed in the [Repository layout](#repository-layout) table; `main.py` remains the hub for **input**, **drawing**, and **combat resolution** after sprites update.
+
+---
+
+## LAN multiplayer (up to 4 players)
+
+The **host** runs the full simulation (mobs, projectiles, drops, saves, inventory). **Guests** connect over TCP, send input, and render **snapshots** so animations stay in sync with the host.
+
+| Constant | Role |
+|----------|------|
+| `settings.MAX_MULTIPLAYERS` | 4 slots (host is always slot `0`). |
+| `settings.MULTIPLAYER_PORT` | Default TCP port (`28765`). |
+| `settings.MP_PROTOCOL_VERSION` | Handshake; must match between host and clients. |
+
+### How to run
+
+1. **Host:** `python main.py --mp-host` — title screen shows the listen port. Start the game (Enter); up to **three** other machines can connect.
+2. **Guest:** `python main.py --mp-join HOST:PORT` — e.g. `python main.py --mp-join 10.0.0.101:28765` (omit port to use `MULTIPLAYER_PORT`).
+
+Guests **do not** use your save file; **loot, XP, crafting, and inventory UI are host-only**. Guests move, attack, and pick targets with the same keys as single-player (no `I` / `E` / pause save). **Esc** exits the guest client.
+
+### Code map
+
+```mermaid
+flowchart LR
+    H[Host Game.update] --> S[mp/sync.build_snapshot]
+    S --> TCP[TCP JSON frames]
+    TCP --> C[Client apply_snapshot]
+    C --> Draw[pygame draw]
+    G[Guest input] --> TCP2[TCP]
+    TCP2 --> H
+```
+
+- `game/mp/protocol.py` — length-prefixed JSON messages.
+- `game/mp/session.py` — `HostSession` (accept + per-client reader threads), `ClientSession` (reader + send lock).
+- `game/mp/sync.py` — `build_snapshot` / `apply_snapshot`, spawn helpers, `find_spawn_tile`.
+- `sprites.py` — `iter_scene_players`, `nearest_living_player`, `GhostProjectile` / `GhostDroppedItem` (client-only visuals), `Mob.net_id` + `kill` unregister, client-side **no-op** `update` when `game.mp_mode == 'client'`.
+- `game/systems/world_ops.py` — `players[]` occupancy in `is_walkable`, `tile_walkable_terrain`, `load_level(..., mp_client=...)`.
+- `main.py` — `Game.player` property → `players[mp_local_slot]`, host input merge, per-player attacks, `_mp_host_flush_snapshot` (including on title/death so guests see the menu).
+
+### Limits (current MVP)
+
+- One shared **host inventory** drives weapon stats for everyone (co-op loadout).
+- Guest death is an **instant respawn** at the checkpoint on the host; host (slot 0) still uses the normal death screen and penalties.

@@ -4,7 +4,7 @@ from os import path
 
 import pygame as pg
 
-from settings import FLOOR_COLOR, MOB_HP, TILESIZE
+from settings import FLOOR_COLOR, MAX_MULTIPLAYERS, MOB_HP, TILESIZE
 from utils import Map, Camera, tiles_on_grid_line
 from sprites import Wall, Mob, Player
 from game.systems import intro_ops
@@ -44,7 +44,8 @@ def load_data(self):
     self._item_sprite_cache = {}
 
 
-def is_walkable(self, col, row):
+def tile_walkable_terrain(self, col, row):
+    """Map geometry only (walls / closed exit); ignores entities."""
     if row < 0 or row >= len(self.map.data):
         return False
     if col < 0 or col >= len(self.map.data[0]):
@@ -54,10 +55,28 @@ def is_walkable(self, col, row):
         return False
     if tile == 'N' and not self.level_exit_open:
         return False
-    if (self.player.tile_x, self.player.tile_y) == (col, row):
+    return True
+
+
+def is_walkable(self, col, row):
+    if not self.tile_walkable_terrain(col, row):
         return False
-    if self.player.slide_to_tile is not None and self.player.slide_to_tile == (col, row):
-        return False
+    players = getattr(self, 'players', None)
+    if players:
+        for p in players:
+            if p is None:
+                continue
+            if (p.tile_x, p.tile_y) == (col, row):
+                return False
+            if p.slide_to_tile is not None and p.slide_to_tile == (col, row):
+                return False
+    else:
+        p = getattr(self, 'player', None)
+        if p is not None:
+            if (p.tile_x, p.tile_y) == (col, row):
+                return False
+            if p.slide_to_tile is not None and p.slide_to_tile == (col, row):
+                return False
     for mob in self.all_mobs:
         if (mob.tile_x, mob.tile_y) == (col, row):
             return False
@@ -84,7 +103,7 @@ def has_line_of_sight_tiles(self, c0, r0, c1, r1):
     return True
 
 
-def load_level(self, level_name, create_player=False):
+def load_level(self, level_name, create_player=False, mp_client=False):
     self.current_level_name = level_name
     level_path = path.join(self.levels_dir, level_name)
     self.map = Map(level_path)
@@ -131,41 +150,64 @@ def load_level(self, level_name, create_player=False):
         player_spawn = self.checkpoint_tile if self.checkpoint_tile else (1, 1)
     reachable_tiles = self._compute_reachable_tiles_from(player_spawn[0], player_spawn[1])
 
-    if create_player or not hasattr(self, 'player') or self.player is None:
-        self.player = Player(self, player_spawn[0], player_spawn[1])
-    else:
-        self.all_sprites.add(self.player)
-        self.player.clear_move_queue()
-        self.player.move_state = 'idle'
-        self.player.slide_to_tile = None
-        self.player.tile_x, self.player.tile_y = self.checkpoint_tile if self.checkpoint_tile else player_spawn
-        self.player.pos = vec(self.player.tile_x * TILESIZE + TILESIZE / 2, self.player.tile_y * TILESIZE + TILESIZE / 2)
-        self.player.hit_rect.center = self.player.pos
-        self.player.rect.center = self.player.hit_rect.center
+    from game.mp.sync import find_spawn_tile
 
-    saved_mobs = self.mob_states_by_level.get(level_name)
-    if isinstance(saved_mobs, list):
-        for m in saved_mobs:
-            tx = int(m.get('tile_x', 0)); ty = int(m.get('tile_y', 0))
-            if (tx, ty) not in reachable_tiles:
-                continue
-            mob_type = m.get('mob_type', 'statue')
-            health = int(m.get('health', MOB_HP))
-            if health <= 0:
-                continue
-            mob = Mob(self, tx, ty, mob_type=mob_type)
-            mob.health = max(1, health)
-            if m.get('state') in ('inactive', 'idle', 'walk', 'attack'):
-                mob.state = m.get('state')
+    if not hasattr(self, 'players') or not isinstance(self.players, list) or len(self.players) != MAX_MULTIPLAYERS:
+        self.players = [None] * MAX_MULTIPLAYERS
+
+    if mp_client:
+        self.players = [None] * MAX_MULTIPLAYERS
+        slot = int(getattr(self, 'mp_local_slot', 0))
+        self.players[slot] = Player(self, player_spawn[0], player_spawn[1])
+        self.players[slot].mp_slot = slot
+    elif create_player or self.players[0] is None:
+        self.players[0] = Player(self, player_spawn[0], player_spawn[1])
+        self.players[0].mp_slot = 0
     else:
-        for spawn in default_mob_spawns:
-            if len(spawn) == 3:
-                col, row, mob_type = spawn
-            else:
-                col, row = spawn; mob_type = 'statue'
-            if (col, row) not in reachable_tiles:
+        origin = self.checkpoint_tile if self.checkpoint_tile else player_spawn
+        origin_c, origin_r = origin[0], origin[1]
+        next_seed_c, next_seed_r = origin_c, origin_r
+        for i, p in enumerate(self.players):
+            if p is None:
                 continue
-            Mob(self, col, row, mob_type=mob_type)
+            self.all_sprites.add(p)
+            p.clear_move_queue()
+            p.move_state = 'idle'
+            p.slide_to_tile = None
+            if i == 0:
+                cx, cy = origin_c, origin_r
+            else:
+                cx, cy = find_spawn_tile(self, next_seed_c, next_seed_r)
+                next_seed_c, next_seed_r = cx, cy
+            p.tile_x, p.tile_y = cx, cy
+            p.pos = vec(cx * TILESIZE + TILESIZE / 2, cy * TILESIZE + TILESIZE / 2)
+            p.hit_rect.center = p.pos
+            p.rect.center = p.hit_rect.center
+
+    if not mp_client:
+        saved_mobs = self.mob_states_by_level.get(level_name)
+        if isinstance(saved_mobs, list):
+            for m in saved_mobs:
+                tx = int(m.get('tile_x', 0)); ty = int(m.get('tile_y', 0))
+                if (tx, ty) not in reachable_tiles:
+                    continue
+                mob_type = m.get('mob_type', 'statue')
+                health = int(m.get('health', MOB_HP))
+                if health <= 0:
+                    continue
+                mob = Mob(self, tx, ty, mob_type=mob_type)
+                mob.health = max(1, health)
+                if m.get('state') in ('inactive', 'idle', 'walk', 'attack'):
+                    mob.state = m.get('state')
+        else:
+            for spawn in default_mob_spawns:
+                if len(spawn) == 3:
+                    col, row, mob_type = spawn
+                else:
+                    col, row = spawn; mob_type = 'statue'
+                if (col, row) not in reachable_tiles:
+                    continue
+                Mob(self, col, row, mob_type=mob_type)
 
     self.level_exit_open = len([m for m in self.all_mobs if getattr(m, 'state', None) != 'dead']) == 0
     if intro_ops.is_intro_level(self):

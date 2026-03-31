@@ -144,3 +144,8 @@ DEXTERITY_SPEED_BONUS = 2
 # Death penalties (fraction of current gold / current XP bar; floors apply — see Game._apply_death_penalties)
 DEATH_GOLD_LOSS_PCT = 0.25
 DEATH_XP_LOSS_PCT = 0.25
+
+# LAN multiplayer (host-authoritative; see game/mp and README)
+MAX_MULTIPLAYERS = 4
+MULTIPLAYER_PORT = 28765
+MP_PROTOCOL_VERSION = 1

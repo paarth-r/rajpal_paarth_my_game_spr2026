@@ -18,6 +18,33 @@ def load_mob_defs():
 MOB_DEFS = load_mob_defs()
 
 
+def iter_scene_players(game):
+    pl = getattr(game, 'players', None)
+    if pl:
+        for p in pl:
+            if p is not None:
+                yield p
+        return
+    p = getattr(game, 'player', None)
+    if p is not None:
+        yield p
+
+
+def nearest_living_player(game, mob):
+    best = None
+    best_d = 1e18
+    for p in iter_scene_players(game):
+        if p.health <= 0:
+            continue
+        dx = p.tile_x - mob.tile_x
+        dy = p.tile_y - mob.tile_y
+        d = dx * dx + dy * dy
+        if d < best_d:
+            best_d = d
+            best = p
+    return best
+
+
 def collide_hit_rect(one, two):
     return one.hit_rect.colliderect(two.rect)
 
@@ -76,6 +103,7 @@ class Player(Sprite):
         self.slide_to_tile = None  # (nx, ny) – commit tile only when slide completes
         self.slide_start_time = 0
         self.slide_duration_ms = max(50, 1000 * TILESIZE / PLAYER_SPEED)  # ms per tile
+        self.mp_slot = 0
 
     def queue_move(self, dx, dy):
         """Add one tile step to the queue (from key hold)."""
@@ -271,6 +299,8 @@ class Player(Sprite):
                 self.game.add_damage_number(self.hit_rect.center, dmg, color=(255, 60, 60))
 
     def update(self):
+        if getattr(self.game, 'mp_mode', None) == 'client':
+            return
         now = pg.time.get_ticks()
         if self.move_state == 'sliding':
             t = (now - self.slide_start_time) / self.slide_duration_ms
@@ -349,7 +379,7 @@ def _scale_mob_frame(surf):
 
 class Mob(Sprite):
     # Mob visuals/stats are data-driven by MOB_DEFS (spritesheet rows: idle, walk, attack, death).
-    def __init__(self, game, x, y, mob_type='statue'):
+    def __init__(self, game, x, y, mob_type='statue', net_id=None):
         self.groups = game.all_sprites, game.all_mobs
         Sprite.__init__(self, self.groups)
         self.game = game
@@ -459,6 +489,18 @@ class Mob(Sprite):
         self.status_burn_next_tick = 0
         self.status_burn_damage_per_tick = 0
         self.status_burn_interval_ms = 500
+        self.network_id = 0
+        if net_id is not None:
+            self.network_id = int(net_id)
+            if hasattr(game, '_mob_by_net_id'):
+                game._mob_by_net_id[self.network_id] = self
+        elif hasattr(game, 'register_network_mob'):
+            self.network_id = game.register_network_mob(self)
+
+    def kill(self):
+        if getattr(self, 'network_id', 0) and hasattr(self.game, 'unregister_network_mob'):
+            self.game.unregister_network_mob(self)
+        super().kill()
 
     def apply_rune_burn(self, duration_ms, tick_interval_ms, damage_per_tick):
         """Refresh lingering fire: always-on DoT while duration lasts."""
@@ -521,8 +563,9 @@ class Mob(Sprite):
         nx, ny = self.tile_x + dx, self.tile_y + dy
         if not self.game.is_walkable(nx, ny):
             return False
-        if (nx, ny) == (self.game.player.tile_x, self.game.player.tile_y):
-            return False
+        for pl in iter_scene_players(self.game):
+            if (nx, ny) == (pl.tile_x, pl.tile_y):
+                return False
         # Commit logical tile immediately so game logic knows which tile mob is on
         self.tile_x, self.tile_y = nx, ny
         target = vec(self.tile_x * TILESIZE + TILESIZE / 2,
@@ -576,6 +619,8 @@ class Mob(Sprite):
                 self.game.on_mob_kill(self)
 
     def update(self):
+        if getattr(self.game, 'mp_mode', None) == 'client':
+            return
         now = pg.time.get_ticks()
         if now >= getattr(self, 'status_slow_until', 0):
             self.status_slow_move_mult = 1.0
@@ -588,7 +633,9 @@ class Mob(Sprite):
             if dpt > 0:
                 self.apply_burn_tick_damage(dpt)
             self.status_burn_next_tick = now + int(getattr(self, 'status_burn_interval_ms', 500))
-        player = self.game.player
+        player = nearest_living_player(self.game, self)
+        if player is None:
+            return
         px, py = player.tile_x, player.tile_y
         dx_tile = px - self.tile_x
         dy_tile = py - self.tile_y
@@ -826,6 +873,57 @@ class Projectile(Sprite):
             return
 
 
+class GhostProjectile(Sprite):
+    """Client-only visual; position updated from host snapshots."""
+
+    def __init__(self, game, x, y, color=(120, 180, 255)):
+        self.groups = game.all_sprites, game.all_projectiles
+        Sprite.__init__(self, self.groups)
+        self.game = game
+        self.mp_ghost = True
+        self.pos = vec(x, y)
+        d = max(4, PROJECTILE_RADIUS_PX * 2)
+        self.image = pg.Surface((d, d), pg.SRCALPHA)
+        pg.draw.circle(self.image, color, (d // 2, d // 2), PROJECTILE_RADIUS_PX)
+        pg.draw.circle(self.image, WHITE, (d // 2, d // 2), PROJECTILE_RADIUS_PX, 1)
+        self.rect = self.image.get_rect(center=(int(self.pos.x), int(self.pos.y)))
+
+    def update(self):
+        pass
+
+
+class GhostDroppedItem(Sprite):
+    """Client-only ground item visual from snapshots."""
+
+    def __init__(self, game, world_x, world_y, item_id, count=1):
+        self.groups = game.all_sprites, game.all_drops
+        Sprite.__init__(self, self.groups)
+        self.game = game
+        self.mp_ghost = True
+        self.item_id = item_id
+        self.count = count
+        from inventory import ITEM_DEFS
+        item_def = ITEM_DEFS.get(item_id, {})
+        color = item_def.get('color', (200, 200, 200))
+        size = max(8, TILESIZE // 2)
+        icon = game.get_item_sprite_scaled(item_id, size - 2)
+        if icon is not None:
+            self.image = pg.Surface((size, size), pg.SRCALPHA)
+            sw, sh = icon.get_size()
+            self.image.blit(icon, ((size - sw) // 2, (size - sh) // 2))
+            pg.draw.rect(self.image, WHITE, (0, 0, size, size), 1)
+        else:
+            self.image = pg.Surface((size, size), pg.SRCALPHA)
+            pg.draw.rect(self.image, color, (0, 0, size, size))
+            pg.draw.rect(self.image, WHITE, (0, 0, size, size), 1)
+        self.rect = self.image.get_rect()
+        self.pos = vec(world_x, world_y)
+        self.rect.center = self.pos
+
+    def update(self):
+        pass
+
+
 class Coin(Sprite):
     def __init__(self, game, x, y):
         self.groups = game.all_sprites
@@ -869,16 +967,17 @@ class DroppedItem(Sprite):
         self.rect.center = self.pos
 
     def update(self):
-        player = self.game.player
-        if self.rect.colliderect(player.hit_rect):
-            before = self.count
-            leftover = self.game.inventory.add_item(self.item_id, self.count)
-            picked = before - leftover
-            if picked > 0:
-                self.game.on_items_gained(self.item_id, picked)
-            self.count = leftover
-            if self.count <= 0:
-                self.kill()
+        for player in iter_scene_players(self.game):
+            if self.rect.colliderect(player.hit_rect):
+                before = self.count
+                leftover = self.game.inventory.add_item(self.item_id, self.count)
+                picked = before - leftover
+                if picked > 0:
+                    self.game.on_items_gained(self.item_id, picked)
+                self.count = leftover
+                if self.count <= 0:
+                    self.kill()
+                break
 
 
 def roll_mob_drops(mob_type_id):

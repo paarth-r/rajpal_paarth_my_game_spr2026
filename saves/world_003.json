@@ -109,7 +109,7 @@
     }
   },
   "selected_hotbar_index": 0,
-  "player_health": 0,
+  "player_health": 75,
   "current_level": "level7.txt",
   "mob_states": {
     "level1.txt": [],
@@ -186,7 +186,7 @@
         "tile_x": 11,
         "tile_y": 9,
         "health": 100,
-        "state": "attack",
+        "state": "idle",
         "mob_type": "ghost"
       },
       {
@@ -214,7 +214,7 @@
         "tile_x": 11,
         "tile_y": 11,
         "health": 110,
-        "state": "attack",
+        "state": "idle",
         "mob_type": "ghost"
       },
       {
