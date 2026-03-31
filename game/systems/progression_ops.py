@@ -9,6 +9,7 @@ from progression import (
 from settings import DEATH_GOLD_LOSS_PCT, DEATH_XP_LOSS_PCT
 from sprites import MOB_DEFS
 from inventory import ITEM_DEFS, EQUIPMENT_SLOTS
+from game.systems import intro_ops
 
 
 def get_skill_attr_bonuses(self):
@@ -58,15 +59,23 @@ def try_purchase_skill_node(self, node_id):
     self.purchased_skill_nodes = set(purchased) | {node_id}
     self.player.recalc_stats()
     self.save_inventory_state()
+    intro_ops.refresh_intro_exit_open(self)
     return True
 
 
 def on_mob_kill(self, mob):
     if self.state != 'playing':
         return
-    d = MOB_DEFS.get(getattr(mob, 'mob_type', 'statue'), {})
+    mob_type = getattr(mob, 'mob_type', 'statue')
+    d = MOB_DEFS.get(mob_type, {})
     xp = int(d.get('xp', 25))
+    if intro_ops.is_intro_level(self) and mob_type == 'training_dummy':
+        need = xp_for_next_level(self.player_level)
+        cur = int(getattr(self, 'player_xp', 0))
+        xp = max(xp, max(0, need - cur))
     self.add_player_xp(xp)
+    if intro_ops.is_intro_level(self):
+        intro_ops.refresh_intro_exit_open(self)
 
 
 def _apply_death_penalties(self):

@@ -78,5 +78,9 @@ def format_on_hit_effect_tooltip(eff):
         frac = int(float(eff.get('damage_fraction', 0.35)) * 100)
         rt = float(eff.get('radius_tiles', 2))
         return f"On-hit: arc {frac}% damage to nearest foe within {rt} tiles (Jupiter)"
+    if kind == 'lifesteal_on_hit':
+        ch = int(float(eff.get('chance', 1.0)) * 100)
+        frac = int(float(eff.get('damage_fraction', 0.15)) * 100)
+        return f"On-hit: {ch}% chance to steal {frac}% of damage as health (Soul Stealer)"
     return None
 

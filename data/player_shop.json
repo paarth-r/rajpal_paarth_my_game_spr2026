@@ -1,0 +1,10 @@
+{
+    "listings": [
+        {
+            "id": "broker_lichenward_strap",
+            "item_id": "lichenward_strap",
+            "price_coins": 99,
+            "min_player_level": 2
+        }
+    ]
+}

@@ -1,37 +1,21 @@
 {
   "slots": [
     [
-      "assassins_grace",
-      1
-    ],
-    [
-      "cobweb",
+      "arcane_sliver",
       4
     ],
     [
-      "assassin_blade_shard",
-      1
-    ],
-    [
-      "gold_coin",
-      2
-    ],
-    [
-      "stone_chip",
+      "wood_splinter",
       3
     ],
-    [
-      "assassins_grace",
-      1
-    ],
+    null,
+    null,
+    null,
+    null,
     null,
     [
-      "string",
-      1
-    ],
-    [
-      "assassins_grace",
-      1
+      "assassin_blade_shard",
+      5
     ],
     null,
     null,
@@ -40,6 +24,10 @@
     null,
     null,
     null,
+    [
+      "assassin_handle_wrap",
+      5
+    ],
     null,
     null,
     null,
@@ -68,56 +56,69 @@
   "hotbar": [
     [
       "gold_coin",
-      88
+      82
     ],
     [
-      "gladius",
+      "assassin_shortbow",
       1
     ],
     [
       "health_potion",
-      2
+      9
     ],
     [
-      "stone_hammer",
+      "cobweb",
+      14
+    ],
+    [
+      "stone_chip",
+      15
+    ],
+    [
+      "legion_helm",
       1
     ],
-    null,
-    null,
-    null,
+    [
+      "galea",
+      1
+    ],
     null
   ],
   "equipment": {
-    "weapon": "assassin_shortbow",
-    "head": "legion_helm",
-    "chest": "legion_cuirass",
+    "weapon": "arcane_staff",
+    "head": "galea",
+    "chest": "lorica",
     "boots": "legion_boots",
     "shield": null
   },
   "equipment_meta": {},
-  "selected_hotbar_index": 3,
-  "player_health": 265,
-  "current_level": "level5.txt",
+  "selected_hotbar_index": 2,
+  "player_health": 285,
+  "current_level": "level4.txt",
   "mob_states": {
+    "intro.txt": [],
     "level1.txt": [],
     "level2.txt": [],
     "level3.txt": [],
-    "level4.txt": [],
-    "level5.txt": []
+    "level4.txt": []
   },
   "discovered_recipes": [
     "assassin_shortbow",
     "assassins_grace",
     "woven_cobweb"
   ],
-  "player_class_id": "legionnaire",
-  "player_level": 7,
-  "player_xp": 65,
-  "skill_points": 2,
+  "player_class_id": "arcanist",
+  "player_level": 8,
+  "player_xp": 190,
+  "skill_points": 3,
   "purchased_skill_nodes": [
-    "leg_brutality",
-    "leg_bulwark",
-    "leg_discipline",
-    "leg_veteran"
-  ]
+    "arc_focus",
+    "arc_mind",
+    "arc_scholar",
+    "arc_ward"
+  ],
+  "opened_chests": [
+    "intro.txt:13,1"
+  ],
+  "intro_exit_unlocked": true
 }

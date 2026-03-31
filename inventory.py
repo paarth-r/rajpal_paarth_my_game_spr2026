@@ -15,6 +15,21 @@ from weapons import (
 
 _DATA_DIR = path.join(path.dirname(__file__), 'data')
 
+def _default_sell_for_rarity(d):
+    r = d.get('rarity', 'common')
+    base = {
+        'common': 2,
+        'uncommon': 5,
+        'rare': 12,
+        'epic': 28,
+        'legendary': 60,
+        'mythic': 120,
+        'divine': 240,
+        'gamebreaking': 400,
+    }
+    return int(base.get(r, 2))
+
+
 def load_item_defs():
     fp = path.join(_DATA_DIR, 'items.json')
     with open(fp, 'r') as f:
@@ -23,6 +38,10 @@ def load_item_defs():
     for item_id, d in raw.items():
         d['color'] = tuple(d.get('color', [200, 200, 200]))
         d.setdefault('rarity', 'common')
+        if item_id == 'gold_coin':
+            d['sell'] = 0
+        else:
+            d.setdefault('sell', _default_sell_for_rarity(d))
         if d.get('type') == 'weapon':
             d.setdefault('attack_range_tiles', PLAYER_DEFAULT_ATTACK_RANGE_TILES)
         defs[item_id] = d
@@ -74,6 +93,24 @@ class Inventory:
         # Upgrade UI staging: weapon+rune before infusion.
         self._upgrade_weapon_item_id = None
         self._upgrade_rune_item_id = None
+        # Shop sell staging: item staged for sale (removed from bag/hotbar/equip while here).
+        self._shop_sell_staged = None  # None or {'item_id', 'count', 'meta'}
+
+    def return_shop_sell_staging(self):
+        """Return staged sell item to inventory and clear."""
+        st = self._shop_sell_staged
+        if not st:
+            return
+        iid, n = st['item_id'], int(st['count'])
+        meta = st.get('meta') or {}
+        if n <= 0:
+            self._shop_sell_staged = None
+            return
+        sm = meta if (n == 1 and meta) else None
+        leftover = self.add_item(iid, n, slot_meta=sm)
+        if leftover > 0:
+            pass  # should not happen if staging was valid
+        self._shop_sell_staged = None
 
     def return_craft_staging(self):
         """Return staged crafting parts to inventory and clear the craft grid."""
@@ -124,6 +161,20 @@ class Inventory:
         self.remove_item(slot_index, 1)
         return True
 
+    def try_salvage_hotbar_slot(self, hotbar_index):
+        """Shift+right-click: destroy one weapon in a hotbar slot, yield salvage."""
+        s = self.get_hotbar_slot(hotbar_index)
+        if s is None:
+            return False
+        item_id, cnt, hmeta = unpack_slot(s)
+        if not self.apply_salvage_from_weapon(item_id):
+            return False
+        if cnt <= 1:
+            self.hotbar[hotbar_index] = None
+        else:
+            self.hotbar[hotbar_index] = pack_slot(item_id, cnt - 1, hmeta if hmeta else None)
+        return True
+
     def try_salvage_equipped_weapon(self):
         """Salvage the equipped weapon (unequips it)."""
         w = self.equipment.get('weapon')
@@ -160,33 +211,65 @@ class Inventory:
             self.slots[index] = pack_slot(item_id, count, meta)
 
     def add_item(self, item_id, count=1, slot_meta=None):
-        """Add items; return leftover that didn't fit. slot_meta applies only when count==1 and a new slot is used."""
+        """Add items; return leftover that didn't fit.
+
+        Merges into existing stacks in hotbar or bag when item_id, stackable, and meta match.
+        New stacks use empty hotbar slots first, then bag. slot_meta applies only for a single-item
+        placement (count==1) into a new slot.
+        """
         if item_id not in ITEM_DEFS or count <= 0:
             return count
         item_def = ITEM_DEFS[item_id]
         max_stack = item_def.get('max_stack', 99)
         stackable = item_def.get('stackable', True)
         attach_meta = slot_meta if (count == 1 and isinstance(slot_meta, dict) and slot_meta) else None
-        for i in range(self.num_slots):
-            if count <= 0:
+        incoming_meta = dict(attach_meta) if attach_meta else {}
+
+        remaining = count
+
+        def try_merge_into(collection):
+            nonlocal remaining
+            for i in range(len(collection)):
+                if remaining <= 0:
+                    break
+                existing = collection[i]
+                if existing is None:
+                    continue
+                eid, current, em = unpack_slot(existing)
+                if eid != item_id or not stackable:
+                    continue
+                if (em or {}) != incoming_meta:
+                    continue
+                room = max_stack - current
+                if room <= 0:
+                    continue
+                add = min(remaining, room)
+                meta_out = em if em else None
+                collection[i] = pack_slot(item_id, current + add, meta_out)
+                remaining -= add
+
+        # 1) Stack onto existing piles (hotbar first, then bag)
+        try_merge_into(self.hotbar)
+        try_merge_into(self.slots)
+
+        # 2) New stacks: prefer empty hotbar, then bag
+        for collection in (self.hotbar, self.slots):
+            if remaining <= 0:
                 break
-            existing = self.slots[i]
-            if existing is not None and existing[0] == item_id and stackable:
-                current = unpack_slot(existing)[1]
-                add = min(count, max_stack - current)
-                if add > 0:
-                    self.slots[i] = pack_slot(item_id, current + add)
-                    count -= add
-        for i in range(self.num_slots):
-            if count <= 0:
-                break
-            if self.slots[i] is None:
-                add = min(count, max_stack)
-                use_meta = attach_meta if (add == count == 1) else None
-                self.slots[i] = pack_slot(item_id, add, use_meta)
-                count -= add
-                attach_meta = None
-        return count
+            limit = self.hotbar_size if collection is self.hotbar else self.num_slots
+            for i in range(limit):
+                if remaining <= 0:
+                    break
+                if collection[i] is not None:
+                    continue
+                add = min(remaining, max_stack)
+                use_meta = attach_meta if (add == 1 and remaining == 1 and attach_meta) else None
+                collection[i] = pack_slot(item_id, add, use_meta)
+                remaining -= add
+                if use_meta:
+                    attach_meta = None
+
+        return remaining
 
     def remove_item(self, slot_index, amount=1):
         s = self.get_slot(slot_index)
@@ -212,7 +295,7 @@ class Inventory:
             s = self.slots[i]
             if s is None or s[0] != item_id:
                 continue
-            _, c = s
+            _iid, c, _m = unpack_slot(s)
             take = min(remaining, c)
             if take > 0:
                 self.remove_item(i, take)

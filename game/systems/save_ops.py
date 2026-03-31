@@ -54,6 +54,9 @@ def _load_world_state_from_save(self):
         level_name = payload.get('current_level')
         if level_name in self.level_order:
             self.current_level_name = level_name
+        elif 'level1.txt' in self.level_order:
+            # Legacy saves without current_level: skip intro (added after early saves).
+            self.current_level_name = 'level1.txt'
         mob_states = payload.get('mob_states', {})
         if isinstance(mob_states, dict):
             self.mob_states_by_level = mob_states
@@ -83,8 +86,12 @@ def create_new_world(self, class_id=None):
     self.set_active_world(new_name)
     self.current_level_name = self.level_order[0]
     self.mob_states_by_level = {}
+    self.opened_chests = set()
+    self.intro_exit_unlocked = False
+    self._pending_empty_character_start = True
     self.load_level(self.current_level_name, create_player=True)
     self._initialize_player_inventory()
+    self._pending_empty_character_start = False
     self.pause_menu_open = False
     self.inventory_open = False
     self.inv_dragging = None
@@ -182,6 +189,8 @@ def save_inventory_state(self):
             'player_xp': int(self.player_xp),
             'skill_points': int(self.skill_points),
             'purchased_skill_nodes': sorted(self.purchased_skill_nodes),
+            'opened_chests': sorted(getattr(self, 'opened_chests', set())),
+            'intro_exit_unlocked': bool(getattr(self, 'intro_exit_unlocked', False)),
         }
         with open(self.save_path, 'w') as f:
             json.dump(payload, f, indent=2)
@@ -247,6 +256,12 @@ def load_inventory_state(self):
         self.skill_points = max(0, int(payload.get('skill_points', 0)))
         ps = payload.get('purchased_skill_nodes', [])
         self.purchased_skill_nodes = set(ps) if isinstance(ps, list) else set()
+        oc = payload.get('opened_chests', [])
+        if isinstance(oc, list):
+            self.opened_chests = {str(x) for x in oc}
+        else:
+            self.opened_chests = set()
+        self.intro_exit_unlocked = bool(payload.get('intro_exit_unlocked', False))
         self._apply_starts_known_recipes()
         self._sync_discovered_recipes_from_inventory()
         return True
@@ -289,10 +304,15 @@ def _initialize_player_inventory(self):
     if loaded:
         self._recompute_player_base_attrs_from_progression()
         self.player.recalc_stats()
+        if hasattr(self, '_apply_opened_chests_to_map'):
+            self._apply_opened_chests_to_map()
         return
     self._apply_starts_known_recipes()
     self._sync_discovered_recipes_from_inventory()
-    self._apply_starting_gear_for_class()
+    if getattr(self, '_pending_empty_character_start', False):
+        self.intro_exit_unlocked = False
+    else:
+        self._apply_starting_gear_for_class()
     self.save_inventory_state()
 
 
