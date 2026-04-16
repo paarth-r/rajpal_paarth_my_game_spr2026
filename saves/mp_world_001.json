@@ -42,13 +42,34 @@
     null
   ],
   "hotbar": [
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
+    [
+      "gold_coin",
+      6
+    ],
+    [
+      "health_potion",
+      2
+    ],
+    [
+      "iron_scrap",
+      3
+    ],
+    [
+      "pugio",
+      1
+    ],
+    [
+      "legion_helm",
+      1
+    ],
+    [
+      "legion_cuirass",
+      1
+    ],
+    [
+      "caligae",
+      1
+    ],
     null
   ],
   "equipment": {
@@ -60,7 +81,7 @@
   },
   "equipment_meta": {},
   "selected_hotbar_index": 0,
-  "player_health": 100,
+  "player_health": 145,
   "current_level": "intro.txt",
   "mob_states": {
     "intro.txt": [
@@ -79,6 +100,8 @@
   "player_xp": 0,
   "skill_points": 0,
   "purchased_skill_nodes": [],
-  "opened_chests": [],
+  "opened_chests": [
+    "intro.txt:13,1"
+  ],
   "intro_exit_unlocked": false
 }

@@ -383,7 +383,20 @@ class Game:
                     continue
                 if getattr(self, 'mp_mode', None) == 'client':
                     if event.key == pg.K_ESCAPE:
-                        self.running = False
+                        if self.inventory_open:
+                            self.inventory_open = False
+                            self.inv_dragging = None
+                            self.inv_selected = None
+                        else:
+                            self.running = False
+                        continue
+                    if event.key in (INVENTORY_KEY, CHARACTER_KEY):
+                        self.inventory_open = not self.inventory_open
+                        if not self.inventory_open:
+                            self.inv_dragging = None
+                            self.inv_selected = None
+                        continue
+                    if self.inventory_open:
                         continue
                     if event.key == pg.K_SPACE:
                         self.mp_pending_send['attack'] = True
