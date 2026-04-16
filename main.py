@@ -153,7 +153,10 @@ class Game:
         self.title_start_btn_rect = None
         self.title_new_world_btn_rect = None
         self.title_choose_save_btn_rect = None
+        self.title_mp_join_btn_rect = None
         self.title_quit_btn_rect = None
+        self.mp_join_input_open = False
+        self.mp_join_input_text = ''
         self.save_picker_open = False
         self.save_picker_slot_rects = []
         self.save_picker_delete_rects = []
@@ -264,6 +267,13 @@ class Game:
         if self.mp_host_flag:
             self.mp_mode = 'host'
             self.mp_host_session = HostSession(self, MULTIPLAYER_PORT)
+            try:
+                _s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                _s.connect(('8.8.8.8', 80))
+                self._mp_local_ip = _s.getsockname()[0]
+                _s.close()
+            except Exception:
+                self._mp_local_ip = '?'
 
         self.player_class_id = DEFAULT_CLASS_ID
         self.player_level = 1
@@ -324,6 +334,21 @@ class Game:
                 self.running = False
             if event.type == pg.KEYDOWN:
                 if self.state == 'intro':
+                    if self.mp_join_input_open:
+                        if event.key == pg.K_ESCAPE:
+                            self.mp_join_input_open = False
+                            self.mp_join_input_text = ''
+                        elif event.key == pg.K_RETURN:
+                            addr = self.mp_join_input_text.strip()
+                            if addr:
+                                subprocess.Popen([sys.executable, path.join(self.game_dir, 'main.py'), '--mp-join', addr])
+                                self.running = False
+                        elif event.key == pg.K_BACKSPACE:
+                            self.mp_join_input_text = self.mp_join_input_text[:-1]
+                        else:
+                            if event.unicode and event.unicode.isprintable():
+                                self.mp_join_input_text += event.unicode
+                        continue
                     if event.key == pg.K_ESCAPE:
                         if self.class_picker_for_new_world:
                             self.class_picker_for_new_world = False
@@ -455,6 +480,8 @@ class Game:
                         if not hit:
                             self.save_picker_open = False
                         continue
+                    if self.mp_join_input_open:
+                        continue
                     if self.title_start_btn_rect and self.title_start_btn_rect.collidepoint(event.pos):
                         self.state = 'playing'
                     elif self.title_new_world_btn_rect and self.title_new_world_btn_rect.collidepoint(event.pos):
@@ -462,6 +489,9 @@ class Game:
                         self.class_picker_selected_id = DEFAULT_CLASS_ID
                     elif self.title_choose_save_btn_rect and self.title_choose_save_btn_rect.collidepoint(event.pos):
                         self.save_picker_open = True
+                    elif self.title_mp_join_btn_rect and self.title_mp_join_btn_rect.collidepoint(event.pos):
+                        self.mp_join_input_open = True
+                        self.mp_join_input_text = ''
                     elif self.title_quit_btn_rect and self.title_quit_btn_rect.collidepoint(event.pos):
                         self.save_inventory_state()
                         self.running = False
@@ -1041,7 +1071,7 @@ class Game:
     def draw_intro(self):
         """Menu-style title screen with interactive buttons."""
         self.screen.fill((8, 8, 12))
-        panel_w, panel_h = 620, 540
+        panel_w, panel_h = 620, 620
         panel_x = (WIDTH - panel_w) // 2
         panel_y = (HEIGHT - panel_h) // 2
         pg.draw.rect(self.screen, (25, 25, 35), (panel_x, panel_y, panel_w, panel_h))
@@ -1060,8 +1090,9 @@ class Game:
             world_surf = font_world.render(f"Active world: {self.current_save_name}", True, GOLD)
             self.screen.blit(world_surf, world_surf.get_rect(center=(WIDTH // 2, panel_y + 176)))
         if getattr(self, 'mp_mode', None) == 'host' and getattr(self, 'mp_host_session', None):
+            _local_ip = getattr(self, '_mp_local_ip', '?')
             host_surf = font_hint.render(
-                f"LAN host  •  port {self.mp_host_session.port}  •  guests: python main.py --mp-join IP:{self.mp_host_session.port}",
+                f"LAN host  •  {_local_ip}:{self.mp_host_session.port}  •  guests: python main.py --mp-join {_local_ip}:{self.mp_host_session.port}",
                 True,
                 (130, 190, 255),
             )
@@ -1071,11 +1102,13 @@ class Game:
         self.title_start_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 220, btn_w, btn_h)
         self.title_new_world_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 300, btn_w, btn_h)
         self.title_choose_save_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 380, btn_w, btn_h)
-        self.title_quit_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 460, btn_w, btn_h)
+        self.title_mp_join_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 460, btn_w, btn_h)
+        self.title_quit_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 540, btn_w, btn_h)
         for rect, text in (
             (self.title_start_btn_rect, "Start / Continue"),
             (self.title_new_world_btn_rect, "New World"),
             (self.title_choose_save_btn_rect, "Choose Save"),
+            (self.title_mp_join_btn_rect, "Join Multiplayer"),
             (self.title_quit_btn_rect, "Quit"),
         ):
             hover = rect.collidepoint(pg.mouse.get_pos())
@@ -1096,8 +1129,35 @@ class Game:
             self.draw_save_picker()
         if self.class_picker_for_new_world:
             self.draw_class_picker_intro()
+        if self.mp_join_input_open:
+            self._draw_mp_join_input()
         self.display.blit(self.screen, (0, 0))
         pg.display.flip()
+
+    def _draw_mp_join_input(self):
+        """Overlay text-input prompt for joining a multiplayer server."""
+        overlay = pg.Surface((WIDTH, HEIGHT), pg.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        self.screen.blit(overlay, (0, 0))
+        pw, ph = 500, 180
+        px = (WIDTH - pw) // 2
+        py = (HEIGHT - ph) // 2
+        pg.draw.rect(self.screen, (25, 25, 38), (px, py, pw, ph))
+        pg.draw.rect(self.screen, (130, 190, 255), (px, py, pw, ph), 2)
+        font_title = pg.font.Font(pg.font.match_font('arial'), 24)
+        font_input = pg.font.Font(pg.font.match_font('arial'), 22)
+        font_hint = pg.font.Font(pg.font.match_font('arial'), 14)
+        label = font_title.render("Join Multiplayer", True, (130, 190, 255))
+        self.screen.blit(label, label.get_rect(center=(px + pw // 2, py + 30)))
+        # input box
+        box = pg.Rect(px + 20, py + 65, pw - 40, 44)
+        pg.draw.rect(self.screen, (40, 40, 55), box)
+        pg.draw.rect(self.screen, WHITE, box, 1)
+        display_text = self.mp_join_input_text or ''
+        inp_surf = font_input.render(display_text + ('|' if (pg.time.get_ticks() // 500) % 2 == 0 else ''), True, WHITE)
+        self.screen.blit(inp_surf, inp_surf.get_rect(midleft=(box.x + 8, box.centery)))
+        hint = font_hint.render("Enter IP:port  •  Enter to connect  •  Esc to cancel", True, DARKGRAY)
+        self.screen.blit(hint, hint.get_rect(center=(px + pw // 2, py + ph - 18)))
 
     def draw_save_picker(self):
         """Overlay panel to choose active world save."""

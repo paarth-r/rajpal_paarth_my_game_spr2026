@@ -109,7 +109,7 @@
     }
   },
   "selected_hotbar_index": 0,
-  "player_health": 75,
+  "player_health": 175,
   "current_level": "level7.txt",
   "mob_states": {
     "level1.txt": [],
