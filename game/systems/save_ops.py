@@ -8,6 +8,11 @@ from progression import DEFAULT_CLASS_ID, get_class_def
 from crafting import default_starts_known_recipe_ids, recipes_unlocked_by_item
 
 
+def is_mp_save(name):
+    """True for saves that belong to multiplayer worlds (mp_world_NNN.json)."""
+    return name.startswith('mp_')
+
+
 def init_save_system(self):
     os.makedirs(self.saves_dir, exist_ok=True)
     legacy_save = path.join(self.game_dir, 'save_inventory.json')
@@ -20,7 +25,10 @@ def init_save_system(self):
                 json.dump(payload, dst, indent=2)
         except Exception:
             pass
-    saves = sorted([f for f in os.listdir(self.saves_dir) if f.endswith('.json')])
+    is_mp_mode = bool(getattr(self, 'mp_host_flag', False))
+    saves = self.list_save_files(mp=is_mp_mode)
+    if not saves:
+        saves = self.list_save_files()
     active = None
     if path.exists(self.active_save_path):
         try:
@@ -31,7 +39,8 @@ def init_save_system(self):
         except Exception:
             active = None
     if active is None:
-        active = saves[0] if saves else 'world_001.json'
+        fallback = 'mp_world_001.json' if is_mp_mode else 'world_001.json'
+        active = saves[0] if saves else fallback
     self.set_active_world(active)
 
 
@@ -64,16 +73,17 @@ def _load_world_state_from_save(self):
         pass
 
 
-def create_new_world(self, class_id=None):
+def create_new_world(self, class_id=None, mp=False):
     saves = [f for f in os.listdir(self.saves_dir) if f.endswith('.json')]
+    prefix = 'mp_world_' if mp else 'world_'
     nums = []
     for s in saves:
-        if s.startswith('world_') and s.endswith('.json'):
-            stem = s[len('world_'):-len('.json')]
+        if s.startswith(prefix) and s.endswith('.json'):
+            stem = s[len(prefix):-len('.json')]
             if stem.isdigit():
                 nums.append(int(stem))
     next_num = (max(nums) + 1) if nums else 1
-    new_name = f"world_{next_num:03d}.json"
+    new_name = f"{prefix}{next_num:03d}.json"
     cid = class_id or DEFAULT_CLASS_ID
     if get_class_def(cid) is None:
         cid = DEFAULT_CLASS_ID
@@ -102,8 +112,14 @@ def create_new_world(self, class_id=None):
     self.state = 'playing'
 
 
-def list_save_files(self):
-    return sorted([f for f in os.listdir(self.saves_dir) if f.endswith('.json')])
+def list_save_files(self, mp=None):
+    """List save files. mp=True → mp only, mp=False → solo only, mp=None → all."""
+    all_saves = sorted([f for f in os.listdir(self.saves_dir) if f.endswith('.json')])
+    if mp is True:
+        return [f for f in all_saves if is_mp_save(f)]
+    if mp is False:
+        return [f for f in all_saves if not is_mp_save(f)]
+    return all_saves
 
 
 def delete_save(self, save_name):

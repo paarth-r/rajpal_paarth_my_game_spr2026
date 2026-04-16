@@ -162,6 +162,7 @@ class Game:
         self.save_picker_delete_rects = []
         self.respawn_button_rect = None
         self.class_picker_for_new_world = False
+        self.class_picker_new_world_is_mp = False
         self.class_picker_selected_id = DEFAULT_CLASS_ID
         self.class_picker_class_rects = []
         self.class_picker_begin_rect = None
@@ -358,11 +359,12 @@ class Game:
                             continue
                     if event.key == pg.K_RETURN:
                         if self.class_picker_for_new_world:
-                            self.create_new_world(self.class_picker_selected_id)
+                            self.create_new_world(self.class_picker_selected_id, mp=getattr(self, 'class_picker_new_world_is_mp', False))
                             continue
                         self.state = 'playing'
                     if event.key == pg.K_n:
                         self.class_picker_for_new_world = True
+                        self.class_picker_new_world_is_mp = bool(getattr(self, 'mp_host_flag', False))
                         self.class_picker_selected_id = DEFAULT_CLASS_ID
                     if event.key == pg.K_s:
                         self.save_picker_open = not self.save_picker_open
@@ -459,7 +461,7 @@ class Game:
                                 hit = True
                                 break
                         if self.class_picker_begin_rect and self.class_picker_begin_rect.collidepoint(event.pos):
-                            self.create_new_world(self.class_picker_selected_id)
+                            self.create_new_world(self.class_picker_selected_id, mp=getattr(self, 'class_picker_new_world_is_mp', False))
                             hit = True
                         if not hit:
                             self.class_picker_for_new_world = False
@@ -486,6 +488,7 @@ class Game:
                         self.state = 'playing'
                     elif self.title_new_world_btn_rect and self.title_new_world_btn_rect.collidepoint(event.pos):
                         self.class_picker_for_new_world = True
+                        self.class_picker_new_world_is_mp = bool(getattr(self, 'mp_host_flag', False))
                         self.class_picker_selected_id = DEFAULT_CLASS_ID
                     elif self.title_choose_save_btn_rect and self.title_choose_save_btn_rect.collidepoint(event.pos):
                         self.save_picker_open = True
@@ -1104,10 +1107,11 @@ class Game:
         self.title_choose_save_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 380, btn_w, btn_h)
         self.title_mp_join_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 460, btn_w, btn_h)
         self.title_quit_btn_rect = pg.Rect(WIDTH // 2 - btn_w // 2, panel_y + 540, btn_w, btn_h)
+        _is_host = bool(getattr(self, 'mp_host_flag', False))
         for rect, text in (
             (self.title_start_btn_rect, "Start / Continue"),
-            (self.title_new_world_btn_rect, "New World"),
-            (self.title_choose_save_btn_rect, "Choose Save"),
+            (self.title_new_world_btn_rect, "New MP World" if _is_host else "New World"),
+            (self.title_choose_save_btn_rect, "Choose MP World" if _is_host else "Choose Save"),
             (self.title_mp_join_btn_rect, "Join Multiplayer"),
             (self.title_quit_btn_rect, "Quit"),
         ):
@@ -1176,9 +1180,11 @@ class Game:
         row_sub_font = pg.font.Font(pg.font.match_font('arial'), 14)
         del_font = pg.font.Font(pg.font.match_font('arial'), 18)
         hint_font = pg.font.Font(pg.font.match_font('arial'), 15)
-        title = title_font.render("Choose Save", True, WHITE)
+        is_mp = bool(getattr(self, 'mp_host_flag', False))
+        picker_title = "Choose MP World" if is_mp else "Choose Save"
+        title = title_font.render(picker_title, True, WHITE)
         self.screen.blit(title, (panel_x + 20, panel_y + 16))
-        saves = self.list_save_files()
+        saves = self.list_save_files(mp=is_mp)
         y = panel_y + 70
         row_h = 54
         max_rows = 7
@@ -3452,6 +3458,7 @@ class Game:
 
 # --- Refactored subsystem bindings (structure-only, no gameplay changes) ---
 Game.load_data = world_system.load_data
+Game.tile_walkable_terrain = world_system.tile_walkable_terrain
 Game.is_walkable = world_system.is_walkable
 Game.tile_blocks_line_of_sight = world_system.tile_blocks_line_of_sight
 Game.has_line_of_sight_tiles = world_system.has_line_of_sight_tiles
