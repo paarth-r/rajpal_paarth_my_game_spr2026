@@ -1,0 +1,107 @@
+{
+  "slots": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+  ],
+  "hotbar": [
+    [
+      "gold_coin",
+      5
+    ],
+    [
+      "health_potion",
+      3
+    ],
+    [
+      "arcane_sliver",
+      4
+    ],
+    [
+      "arcane_staff",
+      1
+    ],
+    [
+      "legion_helm",
+      1
+    ],
+    [
+      "lorica",
+      1
+    ],
+    [
+      "legion_boots",
+      1
+    ],
+    null
+  ],
+  "equipment": {
+    "weapon": null,
+    "head": null,
+    "chest": null,
+    "boots": null,
+    "shield": null
+  },
+  "equipment_meta": {},
+  "selected_hotbar_index": 0,
+  "player_health": 145,
+  "current_level": "intro.txt",
+  "mob_states": {
+    "intro.txt": [
+      {
+        "tile_x": 16,
+        "tile_y": 5,
+        "health": 28,
+        "state": "inactive",
+        "mob_type": "training_dummy"
+      }
+    ]
+  },
+  "discovered_recipes": [],
+  "player_class_id": "arcanist",
+  "player_level": 1,
+  "player_xp": 0,
+  "skill_points": 0,
+  "purchased_skill_nodes": [],
+  "opened_chests": [
+    "intro.txt:13,1"
+  ],
+  "intro_exit_unlocked": false
+}

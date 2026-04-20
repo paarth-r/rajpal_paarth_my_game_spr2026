@@ -67,6 +67,71 @@ class Game:
         self.playing = True
         self.mp_host_flag = bool(mp_host)
         self.mp_join_addr = mp_join
+        self.username = self._load_or_prompt_username()
+        if not self.running:
+            return
+
+    def _load_or_prompt_username(self):
+        import json as _json
+        game_dir = path.dirname(__file__)
+        saves_dir = path.join(game_dir, 'saves')
+        cfg_path = path.join(saves_dir, 'user_config.json')
+        os.makedirs(saves_dir, exist_ok=True)
+        try:
+            with open(cfg_path, 'r') as f:
+                name = _json.load(f).get('username', '').strip()
+            if name:
+                return name
+        except Exception:
+            pass
+        name = self._run_username_input_screen()
+        if not name:
+            self.running = False
+            return ''
+        try:
+            with open(cfg_path, 'w') as f:
+                _json.dump({'username': name}, f)
+        except Exception:
+            pass
+        return name
+
+    def _run_username_input_screen(self):
+        font_big = pg.font.SysFont(None, 52)
+        font_med = pg.font.SysFont(None, 34)
+        text = ''
+        clock = pg.time.Clock()
+        while True:
+            for event in pg.event.get():
+                if event.type == pg.QUIT:
+                    self.running = False
+                    return ''
+                if event.type == pg.KEYDOWN:
+                    if event.key == pg.K_ESCAPE:
+                        self.running = False
+                        return ''
+                    if event.key == pg.K_RETURN:
+                        name = text.strip()
+                        if name:
+                            return name
+                    elif event.key == pg.K_BACKSPACE:
+                        text = text[:-1]
+                    else:
+                        if event.unicode and event.unicode.isprintable() and len(text) < 24:
+                            text += event.unicode
+            self.display.fill((20, 20, 30))
+            title_s = font_big.render('Enter your username', True, (230, 200, 120))
+            self.display.blit(title_s, title_s.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 80)))
+            box_w, box_h = 340, 46
+            box_x = WIDTH // 2 - box_w // 2
+            box_y = HEIGHT // 2 - box_h // 2
+            pg.draw.rect(self.display, (50, 50, 70), (box_x, box_y, box_w, box_h), border_radius=6)
+            pg.draw.rect(self.display, (140, 140, 200), (box_x, box_y, box_w, box_h), 2, border_radius=6)
+            inp_s = font_med.render(text + ('|' if pg.time.get_ticks() % 1000 < 500 else ' '), True, (240, 240, 240))
+            self.display.blit(inp_s, inp_s.get_rect(midleft=(box_x + 12, box_y + box_h // 2)))
+            hint_s = font_med.render('Press Enter to confirm', True, (160, 160, 180))
+            self.display.blit(hint_s, hint_s.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 56)))
+            pg.display.flip()
+            clock.tick(60)
 
     @property
     def player(self):
@@ -315,7 +380,7 @@ class Game:
         self._mp_applied_tick = -1
         self.mp_snap_damage_numbers = []
         self.mp_snap_chain_fx = []
-        self.mp_pending_send = {'moves': [], 'attack': False, 'clear': False, 'tgt': None}
+        self.mp_pending_send = {'moves': [], 'attack': False, 'clear': False, 'tgt': None, 'chest_req': False}
         self.mp_client_session = None
         self.mp_client_lost = False
         self.mp_latest_snapshot = None
@@ -398,7 +463,8 @@ class Game:
                     self._mp_poll_host_network()
                     self._mp_host_flush_snapshot()
             else:
-                if not self.inventory_open and not self.pause_menu_open:
+                _pause = self.pause_menu_open or (self.inventory_open and getattr(self, 'mp_mode', None) != 'host')
+                if not _pause:
                     self.update()
                 self.draw()
 
@@ -486,6 +552,8 @@ class Game:
                         self.mp_pending_send['moves'].append((-1, 0))
                     if event.key in (pg.K_d, pg.K_RIGHT):
                         self.mp_pending_send['moves'].append((1, 0))
+                    if event.key == pg.K_g:
+                        self.mp_pending_send['chest_req'] = True
                     continue
                 if event.key == pg.K_ESCAPE:
                     if self.pause_menu_open:
@@ -667,6 +735,19 @@ class Game:
                             data['sock'], data['lock'],
                             {'type': 'grant_items', 'items': [[iid, cnt] for iid, cnt in items]},
                         )
+            elif msg.get('type') == 'chest_req':
+                col = int(msg.get('col', -1))
+                row = int(msg.get('row', -1))
+                p = self.players[slot] if 0 <= slot < len(self.players) else None
+                if p is not None and col >= 0 and row >= 0:
+                    px, py = p.tile_x, p.tile_y
+                    if abs(px - col) <= 1 and abs(py - row) <= 1:
+                        k = intro_ops.chest_storage_key(self.current_level_name, col, row)
+                        if (k not in self.opened_chests and hasattr(self, 'map')
+                                and 0 <= row < len(self.map.data)
+                                and 0 <= col < len(self.map.data[row])
+                                and self.map.data[row][col] == 'C'):
+                            self._open_chest_at_for_guest(slot, col, row)
             elif msg.get('type') == 'input':
                 acc = merged_in.setdefault(
                     slot, {'moves': [], 'attack': False, 'clear': False, 'tgt': None}
@@ -792,6 +873,14 @@ class Game:
                 for entry in msg.get('items', []):
                     if isinstance(entry, list) and len(entry) >= 2 and entry[0] in ITEM_DEFS:
                         self.inventory.add_item(entry[0], int(entry[1]))
+            elif msg.get('type') == 'chest_opened':
+                col, row = int(msg['col']), int(msg['row'])
+                k = intro_ops.chest_storage_key(self.current_level_name, col, row)
+                self.opened_chests.add(k)
+                if hasattr(self, 'map') and 0 <= row < len(self.map.data):
+                    line = self.map.data[row]
+                    if 0 <= col < len(line) and line[col] == 'C':
+                        self._set_map_tile(col, row, '.')
         dt_ms = int(self.dt * 1000)
         live = []
         for dn in self.damage_numbers:
@@ -818,6 +907,14 @@ class Game:
         self.mp_pending_send['moves'] = []
         self.mp_pending_send['attack'] = False
         self.mp_pending_send['clear'] = False
+        if self.mp_pending_send.get('chest_req') and self.mp_client_session:
+            ct = self._adjacent_unopened_chest_tile()
+            if ct:
+                try:
+                    self.mp_client_session.send({'type': 'chest_req', 'col': ct[0], 'row': ct[1]})
+                except OSError:
+                    pass
+            self.mp_pending_send['chest_req'] = False
         if self.player is not None:
             self.camera.update(self.player)
 
@@ -1633,15 +1730,46 @@ class Game:
         self._set_map_tile(col, row, '.')
         for item_id, n in entries:
             self.on_items_gained(item_id, int(n))
-        if getattr(self, 'mp_mode', None) == 'host' and (col, row) in intro_ops.STARTER_CHEST_TILES:
-            for g_slot, g_class_id in list(self.mp_guest_class_ids.items()):
-                g_items = intro_ops.class_starter_loot_entries(g_class_id)
-                data = self.mp_clients.get(g_slot)
-                if data:
-                    self.mp_host_session.send_to_slot(
-                        data['sock'], data['lock'],
-                        {'type': 'grant_items', 'items': [[iid, cnt] for iid, cnt in g_items]},
-                    )
+        if getattr(self, 'mp_mode', None) == 'host':
+            opened_msg = {'type': 'chest_opened', 'col': col, 'row': row}
+            if (col, row) in intro_ops.STARTER_CHEST_TILES:
+                for g_slot, g_class_id in list(self.mp_guest_class_ids.items()):
+                    g_items = intro_ops.class_starter_loot_entries(g_class_id)
+                    data = self.mp_clients.get(g_slot)
+                    if data:
+                        self.mp_host_session.send_to_slot(
+                            data['sock'], data['lock'],
+                            {'type': 'grant_items', 'items': [[iid, cnt] for iid, cnt in g_items]},
+                        )
+                        self.mp_host_session.send_to_slot(data['sock'], data['lock'], opened_msg)
+            else:
+                for data in self.mp_clients.values():
+                    self.mp_host_session.send_to_slot(data['sock'], data['lock'], opened_msg)
+        intro_ops.refresh_intro_exit_open(self)
+        self.save_inventory_state()
+
+    def _open_chest_at_for_guest(self, slot, col, row):
+        """Host opens a chest on behalf of a guest — gives guest their loot, marks chest globally opened."""
+        p = self.players[slot] if 0 <= slot < len(self.players) else None
+        if p is None:
+            return
+        guest_class = self.mp_guest_class_ids.get(slot, DEFAULT_CLASS_ID)
+        if (col, row) in intro_ops.STARTER_CHEST_TILES:
+            items = intro_ops.class_starter_loot_entries(guest_class)
+        else:
+            items = intro_ops.loot_entries_for_intro_chest(self, col, row) or []
+        k = intro_ops.chest_storage_key(self.current_level_name, col, row)
+        self.opened_chests.add(k)
+        self._set_map_tile(col, row, '.')
+        opened_msg = {'type': 'chest_opened', 'col': col, 'row': row}
+        grant_msg = {'type': 'grant_items', 'items': [[iid, cnt] for iid, cnt in items]}
+        data = self.mp_clients.get(slot)
+        if data:
+            self.mp_host_session.send_to_slot(data['sock'], data['lock'], grant_msg)
+            self.mp_host_session.send_to_slot(data['sock'], data['lock'], opened_msg)
+        for other_slot, other_data in self.mp_clients.items():
+            if other_slot != slot:
+                self.mp_host_session.send_to_slot(other_data['sock'], other_data['lock'], opened_msg)
         intro_ops.refresh_intro_exit_open(self)
         self.save_inventory_state()
 
