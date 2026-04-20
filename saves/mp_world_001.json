@@ -46,59 +46,39 @@
       "gold_coin",
       6
     ],
-    [
-      "health_potion",
-      2
-    ],
+    null,
     [
       "iron_scrap",
       3
     ],
     [
-      "pugio",
-      1
+      "health_potion",
+      2
     ],
-    [
-      "legion_helm",
-      1
-    ],
-    [
-      "legion_cuirass",
-      1
-    ],
-    [
-      "caligae",
-      1
-    ],
+    null,
+    null,
+    null,
     null
   ],
   "equipment": {
-    "weapon": null,
-    "head": null,
-    "chest": null,
-    "boots": null,
+    "weapon": "pugio",
+    "head": "legion_helm",
+    "chest": "legion_cuirass",
+    "boots": "caligae",
     "shield": null
   },
   "equipment_meta": {},
-  "selected_hotbar_index": 0,
+  "selected_hotbar_index": 2,
   "player_health": 145,
   "current_level": "intro.txt",
   "mob_states": {
-    "intro.txt": [
-      {
-        "tile_x": 16,
-        "tile_y": 5,
-        "health": 28,
-        "state": "inactive",
-        "mob_type": "training_dummy"
-      }
-    ]
+    "intro.txt": []
   },
   "discovered_recipes": [],
   "player_class_id": "assassin",
-  "player_level": 1,
+  "player_level": 2,
   "player_xp": 0,
-  "skill_points": 0,
+  "skill_points": 1,
   "purchased_skill_nodes": [],
   "opened_chests": [
     "intro.txt:13,1"

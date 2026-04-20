@@ -119,5 +119,7 @@
     "leg_bulwark",
     "leg_discipline",
     "leg_veteran"
-  ]
+  ],
+  "opened_chests": [],
+  "intro_exit_unlocked": false
 }
