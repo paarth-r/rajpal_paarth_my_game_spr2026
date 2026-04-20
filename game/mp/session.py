@@ -91,6 +91,8 @@ class ClientSession:
             for m in msgs:
                 if m.get('type') == 'snapshot':
                     self.game.mp_latest_snapshot = m
+                else:
+                    self.game.mp_host_messages.put(m)
 
     def send(self, obj):
         with self._send_lock:

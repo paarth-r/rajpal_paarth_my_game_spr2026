@@ -174,6 +174,72 @@ class Game:
         self.death_screen_coins_lost = 0
         self.death_screen_xp_lost = 0
 
+    def _run_mp_join_class_picker(self):
+        """Blocking class picker shown before connecting to an MP server. Returns class_id or None (cancel)."""
+        selected = DEFAULT_CLASS_ID
+        font_title = pg.font.Font(pg.font.match_font('arial'), 32)
+        font_body = pg.font.Font(pg.font.match_font('arial'), 17)
+        font_btn = pg.font.Font(pg.font.match_font('arial'), 22)
+        font_hint = pg.font.Font(pg.font.match_font('arial'), 14)
+        class_rects = []
+        join_rect = None
+        while True:
+            self.clock.tick(FPS)
+            class_rects = []
+            self.screen.fill((8, 8, 12))
+            panel_w, panel_h = 640, 490
+            panel_x = (WIDTH - panel_w) // 2
+            panel_y = (HEIGHT - panel_h) // 2
+            pg.draw.rect(self.screen, (28, 28, 36), (panel_x, panel_y, panel_w, panel_h))
+            pg.draw.rect(self.screen, (130, 190, 255), (panel_x, panel_y, panel_w, panel_h), 2)
+            self.screen.blit(font_title.render("Choose your class", True, WHITE), (panel_x + 20, panel_y + 14))
+            mx, my = pg.mouse.get_pos()
+            y = panel_y + 60
+            row_h = 86
+            for cid in sorted(CLASS_DEFS.keys()):
+                cdef = CLASS_DEFS[cid]
+                rect = pg.Rect(panel_x + 20, y, panel_w - 40, row_h)
+                sel = cid == selected
+                bg = (85, 95, 130) if sel else (52, 52, 68)
+                if rect.collidepoint(mx, my) and not sel:
+                    bg = (68, 70, 88)
+                pg.draw.rect(self.screen, bg, rect)
+                pg.draw.rect(self.screen, (130, 190, 255) if sel else (100, 100, 120), rect, 2)
+                self.screen.blit(font_body.render(cdef['name'], True, WHITE), (rect.x + 12, rect.y + 10))
+                desc = (cdef.get('description', '') or '')[:140]
+                self.screen.blit(font_body.render(desc, True, UI_TEXT_MUTED), (rect.x + 12, rect.y + 36))
+                class_rects.append((rect, cid))
+                y += row_h + 8
+            join_rect = pg.Rect(panel_x + 20, panel_y + panel_h - 60, panel_w - 40, 44)
+            jcol = (40, 110, 170) if join_rect.collidepoint(mx, my) else (28, 80, 130)
+            pg.draw.rect(self.screen, jcol, join_rect)
+            pg.draw.rect(self.screen, WHITE, join_rect, 2)
+            self.screen.blit(
+                font_btn.render("Join Server", True, WHITE),
+                font_btn.render("Join Server", True, WHITE).get_rect(center=join_rect.center),
+            )
+            self.screen.blit(
+                font_hint.render("Esc = cancel  |  Enter = join with selected class", True, GOLD),
+                (panel_x + 20, panel_y + panel_h - 12),
+            )
+            self.display.blit(self.screen, (0, 0))
+            pg.display.flip()
+            for event in pg.event.get():
+                if event.type == pg.QUIT:
+                    return None
+                if event.type == pg.KEYDOWN:
+                    if event.key == pg.K_ESCAPE:
+                        return None
+                    if event.key == pg.K_RETURN:
+                        return selected
+                if event.type == pg.MOUSEBUTTONDOWN and event.button == 1:
+                    for rect, cid in class_rects:
+                        if rect.collidepoint(event.pos):
+                            selected = cid
+                            break
+                    if join_rect and join_rect.collidepoint(event.pos):
+                        return selected
+
     def _mp_client_connect_and_load(self):
         host, _, ps = self.mp_join_addr.partition(':')
         port = int(ps) if ps.strip() else MULTIPLAYER_PORT
@@ -228,6 +294,10 @@ class Game:
         self.current_level_name = level_name
         self.load_level(level_name, create_player=True, mp_client=True)
         self.mp_client_session = ClientSession(self, sock)
+        try:
+            write_message(sock, {'type': 'class_setup', 'class_id': self.player_class_id})
+        except OSError:
+            pass
         return True
 
     def new(self):
@@ -250,13 +320,19 @@ class Game:
         self.mp_client_lost = False
         self.mp_latest_snapshot = None
         self._mp_remote_input = {}
+        self.mp_guest_class_ids = {}
+        self.mp_host_messages = queue.Queue()
 
         if self.mp_join_addr:
-            self.player_class_id = DEFAULT_CLASS_ID
             self.player_level = 1
             self.player_xp = 0
             self.skill_points = 0
             self.purchased_skill_nodes = set()
+            chosen = self._run_mp_join_class_picker()
+            if chosen is None:
+                self.running = False
+                return
+            self.player_class_id = chosen
             if not self._mp_client_connect_and_load():
                 self.running = False
                 return
@@ -578,7 +654,20 @@ class Game:
                 slot, msg = self.mp_inbox.get_nowait()
             except queue.Empty:
                 break
-            if msg.get('type') == 'input':
+            if msg.get('type') == 'class_setup':
+                class_id = msg.get('class_id', DEFAULT_CLASS_ID)
+                if get_class_def(class_id) is None:
+                    class_id = DEFAULT_CLASS_ID
+                self.mp_guest_class_ids[slot] = class_id
+                if intro_ops.intro_starter_chest_opened(self):
+                    items = intro_ops.class_starter_loot_entries(class_id)
+                    data = self.mp_clients.get(slot)
+                    if data:
+                        self.mp_host_session.send_to_slot(
+                            data['sock'], data['lock'],
+                            {'type': 'grant_items', 'items': [[iid, cnt] for iid, cnt in items]},
+                        )
+            elif msg.get('type') == 'input':
                 acc = merged_in.setdefault(
                     slot, {'moves': [], 'attack': False, 'clear': False, 'tgt': None}
                 )
@@ -694,6 +783,15 @@ class Game:
         if snap and snap.get('tick', 0) != self._mp_applied_tick:
             mp_sync.apply_snapshot(self, snap)
             self._mp_applied_tick = snap.get('tick', 0)
+        while True:
+            try:
+                msg = self.mp_host_messages.get_nowait()
+            except queue.Empty:
+                break
+            if msg.get('type') == 'grant_items':
+                for entry in msg.get('items', []):
+                    if isinstance(entry, list) and len(entry) >= 2 and entry[0] in ITEM_DEFS:
+                        self.inventory.add_item(entry[0], int(entry[1]))
         dt_ms = int(self.dt * 1000)
         live = []
         for dn in self.damage_numbers:
@@ -1535,6 +1633,15 @@ class Game:
         self._set_map_tile(col, row, '.')
         for item_id, n in entries:
             self.on_items_gained(item_id, int(n))
+        if getattr(self, 'mp_mode', None) == 'host' and (col, row) in intro_ops.STARTER_CHEST_TILES:
+            for g_slot, g_class_id in list(self.mp_guest_class_ids.items()):
+                g_items = intro_ops.class_starter_loot_entries(g_class_id)
+                data = self.mp_clients.get(g_slot)
+                if data:
+                    self.mp_host_session.send_to_slot(
+                        data['sock'], data['lock'],
+                        {'type': 'grant_items', 'items': [[iid, cnt] for iid, cnt in g_items]},
+                    )
         intro_ops.refresh_intro_exit_open(self)
         self.save_inventory_state()
 
