@@ -97,6 +97,8 @@ def create_new_world(self, class_id=None, mp=False):
     self.current_level_name = self.level_order[0]
     self.mob_states_by_level = {}
     self.opened_chests = set()
+    self.my_opened_chests = set()
+    self._chest_openers = {}
     self.intro_exit_unlocked = False
     self._pending_empty_character_start = True
     self.load_level(self.current_level_name, create_player=True)
@@ -148,6 +150,8 @@ def select_world(self, save_name):
     self.set_active_world(save_name)
     self.current_level_name = self.level_order[0]
     self.mob_states_by_level = {}
+    self.my_opened_chests = set()
+    self._chest_openers = {}
     self._load_world_state_from_save()
     self.load_level(self.current_level_name, create_player=True)
     self._initialize_player_inventory()
@@ -282,6 +286,7 @@ def load_inventory_state(self):
         else:
             self.opened_chests = set()
         self.intro_exit_unlocked = bool(payload.get('intro_exit_unlocked', False))
+        self.my_opened_chests = set(self.opened_chests)
         self._apply_starts_known_recipes()
         self._sync_discovered_recipes_from_inventory()
         return True

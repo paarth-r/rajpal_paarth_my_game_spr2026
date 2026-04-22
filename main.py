@@ -347,6 +347,7 @@ class Game:
         self.discovered_recipe_ids = set()
         self.mob_states_by_level = {}
         self.opened_chests = set()
+        self.my_opened_chests = set()
         self.intro_exit_unlocked = False
         self.current_save_name = None
         self.save_path = None
@@ -387,6 +388,8 @@ class Game:
         self._mp_remote_input = {}
         self.mp_guest_class_ids = {}
         self.mp_host_messages = queue.Queue()
+        self.my_opened_chests = set()
+        self._chest_openers = {}
 
         if self.mp_join_addr:
             self.player_level = 1
@@ -539,6 +542,14 @@ class Game:
                             self.inv_selected = None
                         continue
                     if self.inventory_open:
+                        continue
+                    if pg.K_1 <= event.key <= pg.K_8:
+                        idx = event.key - pg.K_1
+                        if idx < self.inventory.hotbar_size:
+                            self.inventory.selected_hotbar_index = idx
+                        continue
+                    if event.key == pg.K_f:
+                        self.use_selected_item()
                         continue
                     if event.key == pg.K_SPACE:
                         self.mp_pending_send['attack'] = True
@@ -727,13 +738,25 @@ class Game:
                 if get_class_def(class_id) is None:
                     class_id = DEFAULT_CLASS_ID
                 self.mp_guest_class_ids[slot] = class_id
-                if intro_ops.intro_starter_chest_opened(self):
+                lv = getattr(self, 'current_level_name', None)
+                starter_looted = any(
+                    intro_ops.chest_storage_key(lv, sx, sy) in getattr(self, 'my_opened_chests', set())
+                    or intro_ops.chest_storage_key(lv, sx, sy) in self.opened_chests
+                    for sx, sy in intro_ops.STARTER_CHEST_TILES
+                )
+                if starter_looted:
                     items = intro_ops.class_starter_loot_entries(class_id)
                     data = self.mp_clients.get(slot)
                     if data:
                         self.mp_host_session.send_to_slot(
                             data['sock'], data['lock'],
                             {'type': 'grant_items', 'items': [[iid, cnt] for iid, cnt in items]},
+                        )
+                        self.mp_host_session.send_to_slot(
+                            data['sock'], data['lock'],
+                            {'type': 'chest_looted_for_you',
+                             'col': next(iter(intro_ops.STARTER_CHEST_TILES))[0],
+                             'row': next(iter(intro_ops.STARTER_CHEST_TILES))[1]},
                         )
             elif msg.get('type') == 'chest_req':
                 col = int(msg.get('col', -1))
@@ -817,6 +840,9 @@ class Game:
             self.players[slot] = None
         self.mp_manual_targets.pop(slot, None)
         self._mp_remote_input.pop(slot, None)
+        for key, rec in list(getattr(self, '_chest_openers', {}).items()):
+            if key not in self.opened_chests:
+                self._check_chest_depletion(key)
 
     def _mp_apply_host_remote_inputs(self):
         for slot, msg in list(self._mp_remote_input.items()):
@@ -873,10 +899,15 @@ class Game:
                 for entry in msg.get('items', []):
                     if isinstance(entry, list) and len(entry) >= 2 and entry[0] in ITEM_DEFS:
                         self.inventory.add_item(entry[0], int(entry[1]))
-            elif msg.get('type') == 'chest_opened':
+            elif msg.get('type') == 'chest_looted_for_you':
+                col, row = int(msg['col']), int(msg['row'])
+                k = intro_ops.chest_storage_key(self.current_level_name, col, row)
+                self.my_opened_chests.add(k)
+            elif msg.get('type') == 'chest_depleted':
                 col, row = int(msg['col']), int(msg['row'])
                 k = intro_ops.chest_storage_key(self.current_level_name, col, row)
                 self.opened_chests.add(k)
+                self.my_opened_chests.add(k)
                 if hasattr(self, 'map') and 0 <= row < len(self.map.data):
                     line = self.map.data[row]
                     if 0 <= col < len(line) and line[col] == 'C':
@@ -1710,7 +1741,7 @@ class Game:
             if self.map.data[cy][cx] != 'C':
                 continue
             k = intro_ops.chest_storage_key(self.current_level_name, cx, cy)
-            if k in self.opened_chests:
+            if k in self.opened_chests or k in getattr(self, 'my_opened_chests', set()):
                 continue
             self._open_chest_at(cx, cy)
             return True
@@ -1726,50 +1757,60 @@ class Game:
         if leftover > 0:
             return
         k = intro_ops.chest_storage_key(self.current_level_name, col, row)
-        self.opened_chests.add(k)
-        self._set_map_tile(col, row, '.')
         for item_id, n in entries:
             self.on_items_gained(item_id, int(n))
         if getattr(self, 'mp_mode', None) == 'host':
-            opened_msg = {'type': 'chest_opened', 'col': col, 'row': row}
-            if (col, row) in intro_ops.STARTER_CHEST_TILES:
-                for g_slot, g_class_id in list(self.mp_guest_class_ids.items()):
-                    g_items = intro_ops.class_starter_loot_entries(g_class_id)
-                    data = self.mp_clients.get(g_slot)
-                    if data:
-                        self.mp_host_session.send_to_slot(
-                            data['sock'], data['lock'],
-                            {'type': 'grant_items', 'items': [[iid, cnt] for iid, cnt in g_items]},
-                        )
-                        self.mp_host_session.send_to_slot(data['sock'], data['lock'], opened_msg)
-            else:
-                for data in self.mp_clients.values():
-                    self.mp_host_session.send_to_slot(data['sock'], data['lock'], opened_msg)
-        intro_ops.refresh_intro_exit_open(self)
-        self.save_inventory_state()
+            self.my_opened_chests.add(k)
+            rec = self._chest_openers.setdefault(k, {'slots': set(), 'col': col, 'row': row})
+            rec['slots'].add(0)
+            self._check_chest_depletion(k)
+        else:
+            self.my_opened_chests.add(k)
+            self.opened_chests.add(k)
+            self._set_map_tile(col, row, '.')
+            intro_ops.refresh_intro_exit_open(self)
+            self.save_inventory_state()
 
     def _open_chest_at_for_guest(self, slot, col, row):
-        """Host opens a chest on behalf of a guest — gives guest their loot, marks chest globally opened."""
-        p = self.players[slot] if 0 <= slot < len(self.players) else None
-        if p is None:
-            return
+        """Host opens a chest on behalf of a guest — gives guest their loot, tracks per-player state."""
         guest_class = self.mp_guest_class_ids.get(slot, DEFAULT_CLASS_ID)
         if (col, row) in intro_ops.STARTER_CHEST_TILES:
             items = intro_ops.class_starter_loot_entries(guest_class)
         else:
             items = intro_ops.loot_entries_for_intro_chest(self, col, row) or []
         k = intro_ops.chest_storage_key(self.current_level_name, col, row)
-        self.opened_chests.add(k)
-        self._set_map_tile(col, row, '.')
-        opened_msg = {'type': 'chest_opened', 'col': col, 'row': row}
-        grant_msg = {'type': 'grant_items', 'items': [[iid, cnt] for iid, cnt in items]}
+        rec = self._chest_openers.setdefault(k, {'slots': set(), 'col': col, 'row': row})
+        rec['slots'].add(slot)
         data = self.mp_clients.get(slot)
         if data:
-            self.mp_host_session.send_to_slot(data['sock'], data['lock'], grant_msg)
-            self.mp_host_session.send_to_slot(data['sock'], data['lock'], opened_msg)
-        for other_slot, other_data in self.mp_clients.items():
-            if other_slot != slot:
-                self.mp_host_session.send_to_slot(other_data['sock'], other_data['lock'], opened_msg)
+            if items:
+                self.mp_host_session.send_to_slot(
+                    data['sock'], data['lock'],
+                    {'type': 'grant_items', 'items': [[iid, cnt] for iid, cnt in items]},
+                )
+            self.mp_host_session.send_to_slot(
+                data['sock'], data['lock'],
+                {'type': 'chest_looted_for_you', 'col': col, 'row': row},
+            )
+        self._check_chest_depletion(k)
+
+    def _check_chest_depletion(self, key):
+        """Deplete chest globally when all live players have looted it."""
+        rec = self._chest_openers.get(key)
+        if rec is None or key in self.opened_chests:
+            return
+        live_slots = [i for i in range(MAX_MULTIPLAYERS) if self.players[i] is not None]
+        if live_slots and rec['slots'].issuperset(live_slots):
+            self._deplete_chest(key, rec['col'], rec['row'])
+
+    def _deplete_chest(self, key, col, row):
+        """Remove chest tile globally and notify all clients."""
+        self.opened_chests.add(key)
+        self._set_map_tile(col, row, '.')
+        self._chest_openers.pop(key, None)
+        msg = {'type': 'chest_depleted', 'col': col, 'row': row}
+        for data in self.mp_clients.values():
+            self.mp_host_session.send_to_slot(data['sock'], data['lock'], msg)
         intro_ops.refresh_intro_exit_open(self)
         self.save_inventory_state()
 
@@ -1788,7 +1829,7 @@ class Game:
             if self.map.data[cy][cx] != 'C':
                 continue
             k = intro_ops.chest_storage_key(self.current_level_name, cx, cy)
-            if k in getattr(self, 'opened_chests', set()):
+            if k in getattr(self, 'opened_chests', set()) or k in getattr(self, 'my_opened_chests', set()):
                 continue
             return (cx, cy)
         return None
