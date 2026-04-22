@@ -508,9 +508,14 @@ class Game:
                             continue
                         self.state = 'playing'
                     if event.key == pg.K_n:
-                        self.class_picker_for_new_world = True
-                        self.class_picker_new_world_is_mp = bool(getattr(self, 'mp_host_flag', False))
-                        self.class_picker_selected_id = DEFAULT_CLASS_ID
+                        is_mp = bool(getattr(self, 'mp_host_flag', False))
+                        profile = self.load_profile()
+                        if profile and not is_mp:
+                            self.create_new_world(profile.get('player_class_id', DEFAULT_CLASS_ID), mp=False)
+                        else:
+                            self.class_picker_for_new_world = True
+                            self.class_picker_new_world_is_mp = is_mp
+                            self.class_picker_selected_id = profile.get('player_class_id', DEFAULT_CLASS_ID) if profile else DEFAULT_CLASS_ID
                     if event.key == pg.K_s:
                         self.save_picker_open = not self.save_picker_open
                     if (
@@ -532,8 +537,10 @@ class Game:
                             self.inventory_open = False
                             self.inv_dragging = None
                             self.inv_selected = None
+                        elif self.pause_menu_open:
+                            self.pause_menu_open = False
                         else:
-                            self.running = False
+                            self.pause_menu_open = True
                         continue
                     if event.key in (INVENTORY_KEY, CHARACTER_KEY):
                         self.inventory_open = not self.inventory_open
@@ -675,13 +682,22 @@ class Game:
                     if self.pause_save_btn_rect and self.pause_save_btn_rect.collidepoint(event.pos):
                         self.save_inventory_state()
                     elif self.pause_quit_title_btn_rect and self.pause_quit_title_btn_rect.collidepoint(event.pos):
-                        self.save_inventory_state()
-                        self.pause_menu_open = False
-                        self.inventory.return_craft_staging()
-                        self.inventory.return_upgrade_staging()
-                        self.inventory.return_shop_sell_staging()
-                        self.inventory_open = False
-                        self.state = 'intro'
+                        if getattr(self, 'mp_mode', None) == 'client':
+                            if self.mp_client_session:
+                                try:
+                                    self.mp_client_session.close()
+                                except Exception:
+                                    pass
+                                self.mp_client_session = None
+                            self.running = False
+                        else:
+                            self.save_inventory_state()
+                            self.pause_menu_open = False
+                            self.inventory.return_craft_staging()
+                            self.inventory.return_upgrade_staging()
+                            self.inventory.return_shop_sell_staging()
+                            self.inventory_open = False
+                            self.state = 'intro'
                     elif self.pause_resume_btn_rect and self.pause_resume_btn_rect.collidepoint(event.pos):
                         self.pause_menu_open = False
                     continue
@@ -1271,13 +1287,23 @@ class Game:
         x = WIDTH // 2 - btn_w // 2
         y0 = HEIGHT // 2 - 50
         self.pause_resume_btn_rect = pg.Rect(x, y0, btn_w, btn_h)
-        self.pause_save_btn_rect = pg.Rect(x, y0 + 72, btn_w, btn_h)
-        self.pause_quit_title_btn_rect = pg.Rect(x, y0 + 144, btn_w, btn_h)
-        for rect, text in (
-            (self.pause_resume_btn_rect, "Resume"),
-            (self.pause_save_btn_rect, "Save Game"),
-            (self.pause_quit_title_btn_rect, "Save & Quit to Title"),
-        ):
+        is_client = getattr(self, 'mp_mode', None) == 'client'
+        if is_client:
+            self.pause_save_btn_rect = None
+            self.pause_quit_title_btn_rect = pg.Rect(x, y0 + 72, btn_w, btn_h)
+            buttons = [
+                (self.pause_resume_btn_rect, "Resume"),
+                (self.pause_quit_title_btn_rect, "Disconnect"),
+            ]
+        else:
+            self.pause_save_btn_rect = pg.Rect(x, y0 + 72, btn_w, btn_h)
+            self.pause_quit_title_btn_rect = pg.Rect(x, y0 + 144, btn_w, btn_h)
+            buttons = [
+                (self.pause_resume_btn_rect, "Resume"),
+                (self.pause_save_btn_rect, "Save Game"),
+                (self.pause_quit_title_btn_rect, "Save & Quit to Title"),
+            ]
+        for rect, text in buttons:
             hover = rect.collidepoint(pg.mouse.get_pos())
             color = (80, 80, 80) if hover else (55, 55, 55)
             pg.draw.rect(self.screen, color, rect)
@@ -3764,6 +3790,10 @@ Game.try_purchase_skill_node = progression_system.try_purchase_skill_node
 Game.on_mob_kill = progression_system.on_mob_kill
 Game._apply_death_penalties = progression_system._apply_death_penalties
 
+Game._profile_path = save_system._profile_path
+Game.load_profile = save_system.load_profile
+Game.save_profile = save_system.save_profile
+Game._apply_profile_inventory = save_system._apply_profile_inventory
 Game.init_save_system = save_system.init_save_system
 Game.set_active_world = save_system.set_active_world
 Game._load_world_state_from_save = save_system._load_world_state_from_save

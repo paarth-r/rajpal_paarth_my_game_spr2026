@@ -84,7 +84,11 @@ def create_new_world(self, class_id=None, mp=False):
                 nums.append(int(stem))
     next_num = (max(nums) + 1) if nums else 1
     new_name = f"{prefix}{next_num:03d}.json"
-    cid = class_id or DEFAULT_CLASS_ID
+    profile = load_profile(self) if not mp else None
+    if profile and class_id is None:
+        cid = profile.get('player_class_id', DEFAULT_CLASS_ID)
+    else:
+        cid = class_id or DEFAULT_CLASS_ID
     if get_class_def(cid) is None:
         cid = DEFAULT_CLASS_ID
     self.player_class_id = cid
@@ -100,9 +104,11 @@ def create_new_world(self, class_id=None, mp=False):
     self.my_opened_chests = set()
     self._chest_openers = {}
     self.intro_exit_unlocked = False
-    self._pending_empty_character_start = True
+    self._profile_on_new_world = profile
+    self._pending_empty_character_start = profile is None
     self.load_level(self.current_level_name, create_player=True)
     self._initialize_player_inventory()
+    self._profile_on_new_world = None
     self._pending_empty_character_start = False
     self.pause_menu_open = False
     self.inventory_open = False
@@ -218,6 +224,7 @@ def save_inventory_state(self):
         }
         with open(self.save_path, 'w') as f:
             json.dump(payload, f, indent=2)
+        save_profile(self)
         return True
     except Exception:
         return False
@@ -332,6 +339,13 @@ def _initialize_player_inventory(self):
         if hasattr(self, '_apply_opened_chests_to_map'):
             self._apply_opened_chests_to_map()
         return
+    profile = getattr(self, '_profile_on_new_world', None)
+    if profile:
+        _apply_profile_inventory(self, profile)
+        self._recompute_player_base_attrs_from_progression()
+        self.player.recalc_stats()
+        self.save_inventory_state()
+        return
     self._apply_starts_known_recipes()
     self._sync_discovered_recipes_from_inventory()
     if getattr(self, '_pending_empty_character_start', False):
@@ -339,6 +353,114 @@ def _initialize_player_inventory(self):
     else:
         self._apply_starting_gear_for_class()
     self.save_inventory_state()
+
+
+def _profile_path(self):
+    username = getattr(self, 'username', '').strip()
+    if not username:
+        return None
+    return path.join(self.saves_dir, 'profiles', f'{username}.json')
+
+
+def load_profile(self):
+    fp = _profile_path(self)
+    if not fp or not path.exists(fp):
+        return None
+    try:
+        with open(fp, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def save_profile(self):
+    if getattr(self, 'mp_mode', None) == 'client':
+        return
+    fp = _profile_path(self)
+    if not fp or not hasattr(self, 'inventory') or self.player is None:
+        return
+    os.makedirs(path.dirname(fp), exist_ok=True)
+
+    def _ser(s):
+        if s is None:
+            return None
+        item_id, cnt, meta = unpack_slot(s)
+        return [item_id, cnt, meta] if meta else [item_id, cnt]
+
+    em = {k: dict(v) for k, v in self.inventory.equipment_meta.items() if v}
+    data = {
+        'player_class_id': self.player_class_id,
+        'player_level': int(self.player_level),
+        'player_xp': int(self.player_xp),
+        'skill_points': int(self.skill_points),
+        'purchased_skill_nodes': sorted(self.purchased_skill_nodes),
+        'slots': [_ser(s) for s in self.inventory.slots],
+        'hotbar': [_ser(s) for s in self.inventory.hotbar],
+        'equipment': dict(self.inventory.equipment),
+        'equipment_meta': em,
+        'selected_hotbar_index': int(self.inventory.selected_hotbar_index),
+        'player_health': int(self.player.health),
+        'discovered_recipes': sorted(self.discovered_recipe_ids),
+    }
+    try:
+        with open(fp, 'w') as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
+
+
+def _apply_profile_inventory(self, profile):
+    """Load inventory/class/stats from a profile dict onto the current player."""
+    from inventory import ITEM_DEFS, EQUIPMENT_SLOTS, pack_slot, unpack_slot as _unpack
+
+    slots = profile.get('slots', [])
+    for i in range(min(len(slots), self.inventory.num_slots)):
+        s = slots[i]
+        if s is None:
+            self.inventory.slots[i] = None
+            continue
+        if isinstance(s, list) and len(s) >= 2 and s[0] in ITEM_DEFS and isinstance(s[1], int) and s[1] > 0:
+            meta = s[2] if len(s) >= 3 and isinstance(s[2], dict) else None
+            self.inventory.slots[i] = pack_slot(s[0], s[1], meta)
+
+    hot = profile.get('hotbar', [])
+    if isinstance(hot, list):
+        for i in range(min(len(hot), self.inventory.hotbar_size)):
+            s = hot[i]
+            if isinstance(s, list) and len(s) >= 2 and s[0] in ITEM_DEFS and isinstance(s[1], int) and s[1] > 0:
+                meta = s[2] if len(s) >= 3 and isinstance(s[2], dict) else None
+                self.inventory.hotbar[i] = pack_slot(s[0], s[1], meta)
+
+    eq = profile.get('equipment', {})
+    for slot_name in EQUIPMENT_SLOTS:
+        item_id = eq.get(slot_name)
+        self.inventory.equipment[slot_name] = item_id if item_id in ITEM_DEFS else None
+
+    self.inventory.equipment_meta.clear()
+    for slot_name, meta in profile.get('equipment_meta', {}).items():
+        if slot_name in EQUIPMENT_SLOTS and isinstance(meta, dict) and meta:
+            self.inventory.equipment_meta[slot_name] = dict(meta)
+
+    idx = int(profile.get('selected_hotbar_index', 0))
+    self.inventory.selected_hotbar_index = max(0, min(self.inventory.hotbar_size - 1, idx))
+
+    self.player_class_id = profile.get('player_class_id', self.player_class_id)
+    self.player_level = max(1, int(profile.get('player_level', 1)))
+    self.player_xp = max(0, int(profile.get('player_xp', 0)))
+    self.skill_points = max(0, int(profile.get('skill_points', 0)))
+    ps = profile.get('purchased_skill_nodes', [])
+    self.purchased_skill_nodes = set(ps) if isinstance(ps, list) else set()
+
+    dr = profile.get('discovered_recipes', [])
+    if isinstance(dr, list):
+        self.discovered_recipe_ids.update(str(x) for x in dr)
+    self._apply_starts_known_recipes()
+    self._sync_discovered_recipes_from_inventory()
+
+    saved_hp = profile.get('player_health')
+    if isinstance(saved_hp, int):
+        max_hp = self.player.get_effective_max_health()
+        self.player.health = max(1, min(saved_hp, max_hp))
 
 
 def _get_save_class_name(self, save_name):
