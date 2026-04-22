@@ -49,6 +49,7 @@ from game.systems import player_shop as player_shop_system
 from game.systems import save_ops as save_system
 from game.systems import world_ops as world_system
 from game.mp import sync as mp_sync
+from game.mp import profiles as mp_profiles
 from game.mp.protocol import parse_frames_from_buffer, read_messages, write_message
 from game.mp.session import ClientSession, HostSession, build_welcome
 
@@ -361,7 +362,11 @@ class Game:
         self.load_level(level_name, create_player=True, mp_client=True)
         self.mp_client_session = ClientSession(self, sock)
         try:
-            write_message(sock, {'type': 'class_setup', 'class_id': self.player_class_id})
+            write_message(sock, {
+                'type': 'class_setup',
+                'class_id': self.player_class_id,
+                'username': getattr(self, 'username', ''),
+            })
         except OSError:
             pass
         return True
@@ -381,15 +386,18 @@ class Game:
         self._mp_applied_tick = -1
         self.mp_snap_damage_numbers = []
         self.mp_snap_chain_fx = []
-        self.mp_pending_send = {'moves': [], 'attack': False, 'clear': False, 'tgt': None, 'chest_req': False}
+        self.mp_pending_send = {'moves': [], 'attack': False, 'clear': False, 'tgt': None, 'chest_req': False, 'heal': 0}
         self.mp_client_session = None
         self.mp_client_lost = False
         self.mp_latest_snapshot = None
         self._mp_remote_input = {}
         self.mp_guest_class_ids = {}
+        self.mp_guest_usernames = {}
+        self.mp_guest_inv_data = {}
         self.mp_host_messages = queue.Queue()
         self.my_opened_chests = set()
         self._chest_openers = {}
+        self._inv_sync_pending = False
 
         if self.mp_join_addr:
             self.player_level = 1
@@ -556,7 +564,7 @@ class Game:
                             self.inventory.selected_hotbar_index = idx
                         continue
                     if event.key == pg.K_f:
-                        self.use_selected_item()
+                        self._client_use_item()
                         continue
                     if event.key == pg.K_SPACE:
                         self.mp_pending_send['attack'] = True
@@ -749,31 +757,45 @@ class Game:
                 slot, msg = self.mp_inbox.get_nowait()
             except queue.Empty:
                 break
-            if msg.get('type') == 'class_setup':
+            if msg.get('type') == 'inv_sync':
+                self.mp_guest_inv_data[slot] = msg
+            elif msg.get('type') == 'class_setup':
                 class_id = msg.get('class_id', DEFAULT_CLASS_ID)
                 if get_class_def(class_id) is None:
                     class_id = DEFAULT_CLASS_ID
                 self.mp_guest_class_ids[slot] = class_id
-                lv = getattr(self, 'current_level_name', None)
-                starter_looted = any(
-                    intro_ops.chest_storage_key(lv, sx, sy) in getattr(self, 'my_opened_chests', set())
-                    or intro_ops.chest_storage_key(lv, sx, sy) in self.opened_chests
-                    for sx, sy in intro_ops.STARTER_CHEST_TILES
-                )
-                if starter_looted:
-                    items = intro_ops.class_starter_loot_entries(class_id)
-                    data = self.mp_clients.get(slot)
-                    if data:
+                username = str(msg.get('username', '')).strip()
+                if username:
+                    self.mp_guest_usernames[slot] = username
+                data = self.mp_clients.get(slot)
+                if data:
+                    wkey = mp_profiles.world_key(getattr(self, 'current_save_name', '') or '')
+                    profile = mp_profiles.load_mp_profile(self.saves_dir, username) if username else None
+                    entry = mp_profiles.get_world_entry(profile, wkey) if profile else None
+                    if entry:
                         self.mp_host_session.send_to_slot(
                             data['sock'], data['lock'],
-                            {'type': 'grant_items', 'items': [[iid, cnt] for iid, cnt in items]},
+                            mp_profiles.build_inv_restore(entry),
                         )
-                        self.mp_host_session.send_to_slot(
-                            data['sock'], data['lock'],
-                            {'type': 'chest_looted_for_you',
-                             'col': next(iter(intro_ops.STARTER_CHEST_TILES))[0],
-                             'row': next(iter(intro_ops.STARTER_CHEST_TILES))[1]},
+                    else:
+                        lv = getattr(self, 'current_level_name', None)
+                        starter_looted = any(
+                            intro_ops.chest_storage_key(lv, sx, sy) in getattr(self, 'my_opened_chests', set())
+                            or intro_ops.chest_storage_key(lv, sx, sy) in self.opened_chests
+                            for sx, sy in intro_ops.STARTER_CHEST_TILES
                         )
+                        if starter_looted:
+                            items = intro_ops.class_starter_loot_entries(class_id)
+                            self.mp_host_session.send_to_slot(
+                                data['sock'], data['lock'],
+                                {'type': 'grant_items', 'items': [[iid, cnt] for iid, cnt in items]},
+                            )
+                            self.mp_host_session.send_to_slot(
+                                data['sock'], data['lock'],
+                                {'type': 'chest_looted_for_you',
+                                 'col': next(iter(intro_ops.STARTER_CHEST_TILES))[0],
+                                 'row': next(iter(intro_ops.STARTER_CHEST_TILES))[1]},
+                            )
             elif msg.get('type') == 'chest_req':
                 col = int(msg.get('col', -1))
                 row = int(msg.get('row', -1))
@@ -789,13 +811,17 @@ class Game:
                             self._open_chest_at_for_guest(slot, col, row)
             elif msg.get('type') == 'input':
                 acc = merged_in.setdefault(
-                    slot, {'moves': [], 'attack': False, 'clear': False, 'tgt': None}
+                    slot, {'moves': [], 'attack': False, 'clear': False, 'tgt': None,
+                           'weapon_id': None, 'heal': 0}
                 )
                 if msg.get('clear'):
                     acc['moves'].clear()
                 acc['moves'].extend(msg.get('moves') or [])
                 if msg.get('attack'):
                     acc['attack'] = True
+                if 'weapon_id' in msg:
+                    acc['weapon_id'] = msg['weapon_id']
+                acc['heal'] = acc.get('heal', 0) + int(msg.get('heal') or 0)
                 if 'tgt' in msg:
                     acc['tgt'] = msg['tgt']
         for slot, acc in merged_in.items():
@@ -856,6 +882,16 @@ class Game:
             self.players[slot] = None
         self.mp_manual_targets.pop(slot, None)
         self._mp_remote_input.pop(slot, None)
+        username = self.mp_guest_usernames.pop(slot, None)
+        inv_data = self.mp_guest_inv_data.pop(slot, None)
+        class_id = self.mp_guest_class_ids.pop(slot, None)
+        if username and inv_data and getattr(self, 'saves_dir', None) and getattr(self, 'current_save_name', None):
+            wkey = mp_profiles.world_key(self.current_save_name)
+            entry = mp_profiles.inv_sync_to_entry(
+                inv_data, class_id or 'legionnaire', self.current_level_name)
+            profile = mp_profiles.load_mp_profile(self.saves_dir, username) or {'username': username, 'worlds': {}}
+            mp_profiles.set_world_entry(profile, wkey, entry)
+            mp_profiles.save_mp_profile(self.saves_dir, username, profile)
         for key, rec in list(getattr(self, '_chest_openers', {}).items()):
             if key not in self.opened_chests:
                 self._check_chest_depletion(key)
@@ -865,6 +901,7 @@ class Game:
             p = self.players[slot] if slot < len(self.players) else None
             if p is None:
                 continue
+            p.mp_guest_weapon_id = msg.get('weapon_id')
             if msg.get('clear'):
                 p.clear_move_queue()
             for m in (msg.get('moves') or [])[:PLAYER_MOVE_QUEUE_MAX]:
@@ -872,6 +909,10 @@ class Game:
                     p.queue_move(int(m[0]), int(m[1]))
             if msg.get('attack'):
                 p.attack()
+            heal = int(msg.get('heal') or 0)
+            if heal > 0:
+                max_hp = p.get_effective_max_health()
+                p.health = min(max_hp, p.health + heal)
             tid = msg.get('tgt')
             if tid is None:
                 self.mp_manual_targets.pop(slot, None)
@@ -915,6 +956,8 @@ class Game:
                 for entry in msg.get('items', []):
                     if isinstance(entry, list) and len(entry) >= 2 and entry[0] in ITEM_DEFS:
                         self.inventory.add_item(entry[0], int(entry[1]))
+            elif msg.get('type') == 'inv_restore':
+                mp_profiles.apply_inv_restore(self, msg)
             elif msg.get('type') == 'chest_looted_for_you':
                 col, row = int(msg['col']), int(msg['row'])
                 k = intro_ops.chest_storage_key(self.current_level_name, col, row)
@@ -943,17 +986,28 @@ class Game:
                 if fx['age_ms'] < fx['life_ms']:
                     live_fx.append(fx)
             self.chain_lightning_fx = live_fx
+        if getattr(self, '_inv_sync_pending', False) and self.mp_client_session and self.player is not None:
+            try:
+                self.mp_client_session.send(self._build_inv_sync())
+            except OSError:
+                pass
+            self._inv_sync_pending = False
         if self.mp_client_session:
+            eff_wid = (self.inventory.equipment.get('weapon')
+                       or self.inventory.get_effective_weapon_item_id())
             self.mp_client_session.send({
                 'type': 'input',
                 'moves': self.mp_pending_send['moves'][:PLAYER_MOVE_QUEUE_MAX],
                 'attack': bool(self.mp_pending_send['attack']),
                 'clear': bool(self.mp_pending_send['clear']),
                 'tgt': self.mp_pending_send['tgt'],
+                'weapon_id': eff_wid,
+                'heal': int(self.mp_pending_send.get('heal', 0)),
             })
         self.mp_pending_send['moves'] = []
         self.mp_pending_send['attack'] = False
         self.mp_pending_send['clear'] = False
+        self.mp_pending_send['heal'] = 0
         if self.mp_pending_send.get('chest_req') and self.mp_client_session:
             ct = self._adjacent_unopened_chest_tile()
             if ct:
@@ -1052,16 +1106,25 @@ class Game:
                     best.hurt(dmg)
                     self.apply_rune_on_hit_effects(best, dmg, attacker=p)
                     p.attack_hit_dealt = True
-        for p in self.players:
-            if p is None:
-                continue
-            if (p.tile_x, p.tile_y) in self.level_return_tiles:
+        live_players = [p for p in self.players if p is not None]
+        if live_players and self.level_return_tiles:
+            return_set = set(self.level_return_tiles)
+            def _near_tile_set(p, tile_set):
+                for tc, tr in tile_set:
+                    if abs(p.tile_x - tc) <= 1 and abs(p.tile_y - tr) <= 1:
+                        return True
+                return False
+            if all(_near_tile_set(p, return_set) for p in live_players):
                 self.go_to_prev_level()
                 return
-        for p in self.players:
-            if p is None:
-                continue
-            if self.level_exit_open and (p.tile_x, p.tile_y) in self.level_exit_tiles:
+        if self.level_exit_open and live_players and self.level_exit_tiles:
+            exit_set = set(self.level_exit_tiles)
+            def _near_exit(p):
+                for tc, tr in exit_set:
+                    if abs(p.tile_x - tc) <= 1 and abs(p.tile_y - tr) <= 1:
+                        return True
+                return False
+            if all(_near_exit(p) for p in live_players):
                 self.go_to_next_level()
                 return
         if self.player is not None:
@@ -2126,6 +2189,48 @@ class Game:
             yy = hy + i * hint_dy
             self.screen.blit(shadow, (hx + 1, yy + 1))
             self.screen.blit(surf, (hx, yy))
+
+    def _build_inv_sync(self):
+        """Serialize current client inventory state into an inv_sync message for the host."""
+        def _ser(s):
+            if s is None:
+                return None
+            item_id, cnt, meta = unpack_slot(s)
+            return [item_id, cnt, meta] if meta else [item_id, cnt]
+        em = {k: dict(v) for k, v in self.inventory.equipment_meta.items() if v}
+        return {
+            'type': 'inv_sync',
+            'player_level': int(self.player_level),
+            'player_xp': int(self.player_xp),
+            'skill_points': int(self.skill_points),
+            'purchased_skill_nodes': sorted(self.purchased_skill_nodes),
+            'player_health': int(self.player.health) if self.player else 80,
+            'slots': [_ser(s) for s in self.inventory.slots],
+            'hotbar': [_ser(s) for s in self.inventory.hotbar],
+            'equipment': dict(self.inventory.equipment),
+            'equipment_meta': em,
+            'selected_hotbar_index': int(self.inventory.selected_hotbar_index),
+        }
+
+    def _client_use_item(self):
+        """Client-side F key: equip gear locally; queue consumable heals for host authorisation."""
+        idx = self.inventory.selected_hotbar_index
+        slot_data = self.inventory.get_hotbar_slot(idx)
+        if slot_data is None:
+            return
+        item_id, _count, _meta = unpack_slot(slot_data)
+        item_def = ITEM_DEFS.get(item_id, {})
+        if item_def.get('type') in ('weapon', 'armor', 'shield', 'accessory', 'ring'):
+            self.inventory.equip_from_hotbar(idx)
+            self._inv_sync_pending = True
+            return
+        if item_def.get('type') == 'consumable':
+            healed = int(item_def.get('effect', {}).get('heal', 0))
+            if healed > 0:
+                consumed = self.inventory.consume_from_hotbar(idx, 1)
+                if consumed is not None:
+                    self.mp_pending_send['heal'] = self.mp_pending_send.get('heal', 0) + healed
+                    self._inv_sync_pending = True
 
     def use_selected_item(self):
         """Equip gear from hotbar (weapon/armor/shield) or use consumables (e.g. potions)."""

@@ -19,16 +19,19 @@ def iter_active_players(game):
             yield p
 
 
-def find_spawn_tile(game, origin_col, origin_row):
-    """Walkable terrain near origin ignoring other entities (for joining players)."""
+def find_spawn_tile(game, origin_col, origin_row, exclude=None):
+    """Walkable terrain near origin; exclude is a set of already-claimed tiles."""
     from game.systems import world_ops
 
-    for ring in range(1, 8):
+    ex = exclude or set()
+    for ring in range(0, 10):
         for dc in range(-ring, ring + 1):
             for dr in range(-ring, ring + 1):
-                if max(abs(dc), abs(dr)) != ring:
+                if ring > 0 and max(abs(dc), abs(dr)) != ring:
                     continue
                 c, r = origin_col + dc, origin_row + dr
+                if (c, r) in ex:
+                    continue
                 if world_ops.tile_walkable_terrain(game, c, r):
                     return c, r
     return origin_col, origin_row

@@ -196,17 +196,32 @@ class Player(Sprite):
         return PLAYER_MAX_HEALTH + attrs.get('health', 0) * HEALTH_ATTR_HP_BONUS
 
     def get_effective_damage(self):
+        guest_wid = getattr(self, 'mp_guest_weapon_id', None)
+        if guest_wid is not None:
+            from weapons import weapon_damage_from_attrs
+            from inventory import ITEM_DEFS
+            return weapon_damage_from_attrs(ITEM_DEFS.get(guest_wid, {}), self.get_effective_attrs())
         if hasattr(self.game, 'inventory'):
             return self.game.inventory.get_weapon_damage(self.get_effective_attrs())
         return PLAYER_ATTACK_DAMAGE
 
     def get_effective_attack_range(self):
         """Attack radius in world pixels (from equipped weapon attack_range_tiles)."""
+        guest_wid = getattr(self, 'mp_guest_weapon_id', None)
+        if guest_wid is not None:
+            from weapons import weapon_range_px
+            from inventory import ITEM_DEFS
+            return weapon_range_px(ITEM_DEFS.get(guest_wid, {}))
         if hasattr(self.game, 'inventory'):
             return self.game.inventory.get_weapon_attack_range_px()
         return PLAYER_ATTACK_RANGE
 
     def is_ranged_weapon(self):
+        guest_wid = getattr(self, 'mp_guest_weapon_id', None)
+        if guest_wid is not None:
+            from weapons import item_is_ranged_weapon
+            from inventory import ITEM_DEFS
+            return item_is_ranged_weapon(ITEM_DEFS.get(guest_wid, {}))
         if hasattr(self.game, 'inventory'):
             return self.game.inventory.is_weapon_ranged()
         return False

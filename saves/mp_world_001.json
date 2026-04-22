@@ -44,7 +44,7 @@
   "hotbar": [
     [
       "gold_coin",
-      6
+      3
     ],
     null,
     [
@@ -70,18 +70,64 @@
   "equipment_meta": {},
   "selected_hotbar_index": 2,
   "player_health": 145,
-  "current_level": "intro.txt",
+  "current_level": "level1.txt",
   "mob_states": {
-    "intro.txt": []
+    "intro.txt": [],
+    "level1.txt": [
+      {
+        "tile_x": 6,
+        "tile_y": 1,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 2,
+        "tile_y": 3,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 17,
+        "tile_y": 7,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 18,
+        "tile_y": 3,
+        "health": 200,
+        "state": "idle",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 21,
+        "tile_y": 20,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      },
+      {
+        "tile_x": 20,
+        "tile_y": 21,
+        "health": 200,
+        "state": "inactive",
+        "mob_type": "statue"
+      }
+    ]
   },
   "discovered_recipes": [],
   "player_class_id": "assassin",
   "player_level": 2,
   "player_xp": 0,
-  "skill_points": 1,
-  "purchased_skill_nodes": [],
+  "skill_points": 0,
+  "purchased_skill_nodes": [
+    "ass_blade"
+  ],
   "opened_chests": [
     "intro.txt:13,1"
   ],
-  "intro_exit_unlocked": false
+  "intro_exit_unlocked": true
 }

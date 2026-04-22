@@ -166,7 +166,7 @@ def load_level(self, level_name, create_player=False, mp_client=False):
     else:
         origin = self.checkpoint_tile if self.checkpoint_tile else player_spawn
         origin_c, origin_r = origin[0], origin[1]
-        next_seed_c, next_seed_r = origin_c, origin_r
+        occupied = set()
         for i, p in enumerate(self.players):
             if p is None:
                 continue
@@ -174,11 +174,8 @@ def load_level(self, level_name, create_player=False, mp_client=False):
             p.clear_move_queue()
             p.move_state = 'idle'
             p.slide_to_tile = None
-            if i == 0:
-                cx, cy = origin_c, origin_r
-            else:
-                cx, cy = find_spawn_tile(self, next_seed_c, next_seed_r)
-                next_seed_c, next_seed_r = cx, cy
+            cx, cy = find_spawn_tile(self, origin_c, origin_r, exclude=occupied)
+            occupied.add((cx, cy))
             p.tile_x, p.tile_y = cx, cy
             p.pos = vec(cx * TILESIZE + TILESIZE / 2, cy * TILESIZE + TILESIZE / 2)
             p.hit_rect.center = p.pos
@@ -247,6 +244,27 @@ def _compute_reachable_tiles_from(self, start_col, start_row):
     return seen
 
 
+def _save_all_guest_profiles(self, next_level):
+    """Write a profile update for every connected guest before a level transition."""
+    from game.mp import profiles as mp_profiles
+    saves_dir = getattr(self, 'saves_dir', None)
+    save_name = getattr(self, 'current_save_name', None)
+    if not saves_dir or not save_name:
+        return
+    wkey = mp_profiles.world_key(save_name)
+    for slot, username in list(getattr(self, 'mp_guest_usernames', {}).items()):
+        if not username:
+            continue
+        inv_data = getattr(self, 'mp_guest_inv_data', {}).get(slot)
+        if not inv_data:
+            continue
+        class_id = getattr(self, 'mp_guest_class_ids', {}).get(slot, 'legionnaire')
+        entry = mp_profiles.inv_sync_to_entry(inv_data, class_id, next_level)
+        profile = mp_profiles.load_mp_profile(saves_dir, username) or {'username': username, 'worlds': {}}
+        mp_profiles.set_world_entry(profile, wkey, entry)
+        mp_profiles.save_mp_profile(saves_dir, username, profile)
+
+
 def go_to_next_level(self):
     try:
         idx = self.level_order.index(self.current_level_name)
@@ -254,8 +272,10 @@ def go_to_next_level(self):
         idx = 0
     if idx + 1 >= len(self.level_order):
         return
-    self.mob_states_by_level[self.current_level_name] = self._snapshot_current_level_mobs()
     next_level = self.level_order[idx + 1]
+    self.mob_states_by_level[self.current_level_name] = self._snapshot_current_level_mobs()
+    if getattr(self, 'mp_mode', None) == 'host':
+        _save_all_guest_profiles(self, next_level)
     self.load_level(next_level, create_player=False)
     self.pause_menu_open = False
     self.inventory.return_craft_staging()
@@ -276,8 +296,10 @@ def go_to_prev_level(self):
         idx = 0
     if idx <= 0:
         return
-    self.mob_states_by_level[self.current_level_name] = self._snapshot_current_level_mobs()
     prev_level = self.level_order[idx - 1]
+    self.mob_states_by_level[self.current_level_name] = self._snapshot_current_level_mobs()
+    if getattr(self, 'mp_mode', None) == 'host':
+        _save_all_guest_profiles(self, prev_level)
     self.load_level(prev_level, create_player=False)
     self.pause_menu_open = False
     self.inventory.return_craft_staging()
