@@ -3818,11 +3818,21 @@ class Game:
     def apply_rune_on_hit_effects(self, primary_mob, damage_dealt, attacker=None):
         """Vulcan burn, Neptune slow, Jupiter chain — always apply when a secondary target exists for chain."""
         attacker = attacker or self.player
-        wid = self.inventory.get_effective_weapon_item_id()
-        if not wid or primary_mob is None:
+        if primary_mob is None:
+            return
+        # Use the attacker's weapon rune, not always the local player's.
+        guest_wid = getattr(attacker, 'mp_guest_weapon_id', None) if attacker is not None else None
+        if guest_wid is not None:
+            wid = guest_wid
+            rune_id = None  # Guest rune metadata not synced server-side
+        else:
+            wid = self.inventory.get_effective_weapon_item_id()
+            if not wid:
+                return
+            rune_id = self.inventory.get_infused_rune_for_weapon_id(wid)
+        if not wid:
             return
         item = ITEM_DEFS.get(wid, {})
-        rune_id = self.inventory.get_infused_rune_for_weapon_id(wid)
         eff = resolve_on_hit_effect(item, rune_id)
         kind = eff.get('kind')
         if kind == 'burn_on_hit':

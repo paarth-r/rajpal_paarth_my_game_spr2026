@@ -162,11 +162,18 @@ class Player(Sprite):
             'right': [self.spritesheet.get_image(i * fw, 7 * fh, fw, fh) for i in range(5)],
         }
 
+    def _is_mp_guest(self):
+        """True when this sprite represents a remote player (not the local player)."""
+        local = int(getattr(self.game, 'mp_local_slot', 0))
+        return getattr(self, 'mp_slot', 0) != local
+
     def attack(self):
         now = pg.time.get_ticks()
-        weapon_id = None
-        if hasattr(self.game, 'inventory'):
-            weapon_id = self.game.inventory.get_effective_weapon_item_id()
+        # Guest sprites use the weapon the client reported; local player uses own inventory.
+        weapon_id = getattr(self, 'mp_guest_weapon_id', None)
+        if weapon_id is None and not self._is_mp_guest():
+            if hasattr(self.game, 'inventory'):
+                weapon_id = self.game.inventory.get_effective_weapon_item_id()
         # Cannot attack unarmed.
         if weapon_id is None:
             return
@@ -181,8 +188,10 @@ class Player(Sprite):
         self.image = self.attack_frames[self.facing][0]
 
     def get_effective_attrs(self):
-        """Base attrs + equipment bonuses + skill tree."""
+        """Base attrs + equipment bonuses + skill tree (local player only)."""
         attrs = dict(self.base_attrs)
+        if self._is_mp_guest():
+            return attrs
         if hasattr(self.game, 'inventory'):
             for stat, val in self.game.inventory.get_equipment_stat_bonuses().items():
                 attrs[stat] = attrs.get(stat, 0) + val
@@ -201,6 +210,8 @@ class Player(Sprite):
             from weapons import weapon_damage_from_attrs
             from inventory import ITEM_DEFS
             return weapon_damage_from_attrs(ITEM_DEFS.get(guest_wid, {}), self.get_effective_attrs())
+        if self._is_mp_guest():
+            return PLAYER_ATTACK_DAMAGE
         if hasattr(self.game, 'inventory'):
             return self.game.inventory.get_weapon_damage(self.get_effective_attrs())
         return PLAYER_ATTACK_DAMAGE
@@ -212,6 +223,8 @@ class Player(Sprite):
             from weapons import weapon_range_px
             from inventory import ITEM_DEFS
             return weapon_range_px(ITEM_DEFS.get(guest_wid, {}))
+        if self._is_mp_guest():
+            return PLAYER_ATTACK_RANGE
         if hasattr(self.game, 'inventory'):
             return self.game.inventory.get_weapon_attack_range_px()
         return PLAYER_ATTACK_RANGE
@@ -222,6 +235,8 @@ class Player(Sprite):
             from weapons import item_is_ranged_weapon
             from inventory import ITEM_DEFS
             return item_is_ranged_weapon(ITEM_DEFS.get(guest_wid, {}))
+        if self._is_mp_guest():
+            return False
         if hasattr(self.game, 'inventory'):
             return self.game.inventory.is_weapon_ranged()
         return False
@@ -247,6 +262,13 @@ class Player(Sprite):
         return max(0, cooldown - elapsed)
 
     def get_attack_cooldown_ms(self):
+        guest_wid = getattr(self, 'mp_guest_weapon_id', None)
+        if guest_wid is not None:
+            from weapons import weapon_cooldown_ms_for_item
+            from inventory import ITEM_DEFS
+            return weapon_cooldown_ms_for_item(ITEM_DEFS.get(guest_wid, {}))
+        if self._is_mp_guest():
+            return PLAYER_ATTACK_COOLDOWN_MS
         if hasattr(self.game, 'inventory'):
             return self.game.inventory.get_weapon_cooldown_ms(PLAYER_ATTACK_COOLDOWN_MS)
         return PLAYER_ATTACK_COOLDOWN_MS

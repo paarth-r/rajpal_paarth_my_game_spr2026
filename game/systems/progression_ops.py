@@ -17,6 +17,8 @@ def get_skill_attr_bonuses(self):
 
 
 def _recompute_player_base_attrs_from_progression(self):
+    if self.player is None:
+        return
     self.player.base_attrs = compute_base_attrs_for_level(self.player_class_id, self.player_level)
 
 
