@@ -11,6 +11,8 @@ __pycache__/
 *.pyzwz
 *.pyzwzw
 
-# Player saves and config (machine-local)
+# Player saves, profiles, and config (machine-local — never commit these)
 saves/
+saves/profiles/
+saves/user_config.json
 docs/

@@ -404,11 +404,15 @@ class Game:
             self.player_xp = 0
             self.skill_points = 0
             self.purchased_skill_nodes = set()
-            chosen = self._run_mp_join_class_picker()
-            if chosen is None:
-                self.running = False
-                return
-            self.player_class_id = chosen
+            existing_profile = self.load_profile()
+            if existing_profile and existing_profile.get('player_class_id'):
+                self.player_class_id = existing_profile['player_class_id']
+            else:
+                chosen = self._run_mp_join_class_picker()
+                if chosen is None:
+                    self.running = False
+                    return
+                self.player_class_id = chosen
             if not self._mp_client_connect_and_load():
                 self.running = False
                 return
