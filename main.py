@@ -802,6 +802,11 @@ class Game:
                                  'col': next(iter(intro_ops.STARTER_CHEST_TILES))[0],
                                  'row': next(iter(intro_ops.STARTER_CHEST_TILES))[1]},
                             )
+            elif msg.get('type') == 'drop_item':
+                item_id = msg.get('item')
+                count = int(msg.get('count', 1))
+                if item_id in ITEM_DEFS and count > 0:
+                    DroppedItem(self, float(msg.get('wx', 0)), float(msg.get('wy', 0)), item_id, count)
             elif msg.get('type') == 'chest_req':
                 col = int(msg.get('col', -1))
                 row = int(msg.get('row', -1))
@@ -3233,6 +3238,48 @@ class Game:
             elif source == 'equip':
                 self.inventory.unequip(index)
 
+    def _drop_item_on_ground(self, drag_src, drag_idx, drag_item, drag_count, drag_meta):
+        """Remove item from inventory and spawn it on the ground near the player."""
+        if not drag_item or drag_count <= 0:
+            return
+        # Remove from source slot
+        if drag_src == 'inv':
+            self.inventory.set_slot(drag_idx, None, 0)
+        elif drag_src == 'hotbar':
+            self.inventory.set_hotbar_slot(drag_idx, None, 0)
+        elif drag_src == 'equip':
+            self.inventory.equipment[drag_idx] = None
+            self.inventory.equipment_meta.pop(drag_idx, None)
+            if self.player is not None:
+                self.player.recalc_stats()
+        else:
+            return
+        self.save_inventory_state()
+
+        p = self.player
+        if p is None:
+            return
+        ox = random.randint(-TILESIZE, TILESIZE)
+        oy = random.randint(-TILESIZE, TILESIZE)
+        wx = p.pos.x + ox
+        wy = p.pos.y + oy
+
+        if getattr(self, 'mp_mode', None) == 'client':
+            if self.mp_client_session:
+                try:
+                    self.mp_client_session.send({
+                        'type': 'drop_item',
+                        'item': drag_item,
+                        'count': drag_count,
+                        'wx': float(wx),
+                        'wy': float(wy),
+                    })
+                except OSError:
+                    pass
+            self._inv_sync_pending = True
+        else:
+            DroppedItem(self, wx, wy, drag_item, drag_count)
+
     def _inv_mouse_up(self, event):
         if event.button != 1 or not self.inv_dragging:
             self.inv_dragging = None
@@ -3241,6 +3288,7 @@ class Game:
         drop_hit = self._inv_hit_test(event.pos)
 
         if drop_hit is None:
+            self._drop_item_on_ground(drag_src, drag_idx, drag_item, drag_count, drag_meta)
             self.inv_dragging = None
             return
         drop_src, drop_idx = drop_hit
