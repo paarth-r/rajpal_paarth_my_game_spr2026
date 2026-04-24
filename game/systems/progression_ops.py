@@ -76,8 +76,22 @@ def on_mob_kill(self, mob):
         cur = int(getattr(self, 'player_xp', 0))
         xp = max(xp, max(0, need - cur))
     self.add_player_xp(xp)
+    if getattr(self, 'mp_mode', None) == 'host':
+        _broadcast_xp_gain(self, xp)
     if intro_ops.is_intro_level(self):
         intro_ops.refresh_intro_exit_open(self)
+
+
+def _broadcast_xp_gain(self, xp):
+    clients = getattr(self, 'mp_clients', {})
+    if not clients:
+        return
+    session = getattr(self, 'mp_host_session', None)
+    if not session:
+        return
+    msg = {'type': 'xp_gain', 'xp': xp}
+    for data in clients.values():
+        session.send_to_slot(data['sock'], data['lock'], msg)
 
 
 def _apply_death_penalties(self):

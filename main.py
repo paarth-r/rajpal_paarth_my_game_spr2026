@@ -977,6 +977,8 @@ class Game:
                     line = self.map.data[row]
                     if 0 <= col < len(line) and line[col] == 'C':
                         self._set_map_tile(col, row, '.')
+            elif msg.get('type') == 'xp_gain':
+                self.add_player_xp(int(msg.get('xp', 0)))
         dt_ms = int(self.dt * 1000)
         live = []
         for dn in self.damage_numbers:
