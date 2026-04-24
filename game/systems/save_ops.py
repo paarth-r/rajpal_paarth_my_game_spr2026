@@ -359,7 +359,8 @@ def _profile_path(self):
     username = getattr(self, 'username', '').strip()
     if not username:
         return None
-    return path.join(self.saves_dir, 'profiles', f'{username}.json')
+    saves_dir = getattr(self, 'saves_dir', None) or path.join(path.dirname(path.dirname(path.dirname(__file__))), 'saves')
+    return path.join(saves_dir, 'profiles', f'{username}.json')
 
 
 def load_profile(self):

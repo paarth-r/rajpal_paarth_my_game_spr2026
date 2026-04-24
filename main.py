@@ -404,6 +404,8 @@ class Game:
             self.player_xp = 0
             self.skill_points = 0
             self.purchased_skill_nodes = set()
+            if not getattr(self, 'saves_dir', None):
+                self.saves_dir = path.join(path.dirname(__file__), 'saves')
             existing_profile = self.load_profile()
             if existing_profile and existing_profile.get('player_class_id'):
                 self.player_class_id = existing_profile['player_class_id']
