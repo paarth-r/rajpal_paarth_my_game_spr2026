@@ -248,8 +248,7 @@ def apply_snapshot(game, snap):
         _apply_mob_visual(mob, md)
     for nid, mob in list(game._mob_by_net_id.items()):
         if nid not in seen_m:
-            mob.kill()
-            del game._mob_by_net_id[nid]
+            mob.kill()  # Mob.kill() calls unregister_network_mob, which removes from _mob_by_net_id
 
     for s in list(game.all_projectiles):
         if getattr(s, 'mp_ghost', False):
