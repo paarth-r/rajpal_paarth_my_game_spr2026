@@ -199,6 +199,17 @@ def apply_snapshot(game, snap):
     if snap.get('type') != 'snapshot':
         return
 
+    snap_level = snap.get('level', '')
+    if snap_level and snap_level != getattr(game, 'current_level_name', ''):
+        game.load_level(snap_level, create_player=False, mp_client=True)
+        game.inventory.return_craft_staging()
+        game.inventory.return_upgrade_staging()
+        game.inventory.return_shop_sell_staging()
+        game.inventory_open = False
+        game.inv_dragging = None
+        game.inv_selected = None
+        game.pause_menu_open = False
+
     game.level_exit_open = bool(snap.get('leo', False))
     oc = snap.get('oc')
     if isinstance(oc, list):
