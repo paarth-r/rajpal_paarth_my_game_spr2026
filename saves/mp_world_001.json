@@ -72,7 +72,7 @@
   },
   "equipment_meta": {},
   "selected_hotbar_index": 2,
-  "player_health": 40,
+  "player_health": 85,
   "current_level": "level1.txt",
   "mob_states": {
     "intro.txt": [],
@@ -127,5 +127,9 @@
   "opened_chests": [
     "intro.txt:13,1"
   ],
-  "intro_exit_unlocked": true
+  "intro_exit_unlocked": true,
+  "player_roster": {
+    "paarth": {}
+  },
+  "roster_locked": false
 }

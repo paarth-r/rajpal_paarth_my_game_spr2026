@@ -157,6 +157,8 @@ def load_level(self, level_name, create_player=False, mp_client=False):
 
     if mp_client:
         self.players = [None] * MAX_MULTIPLAYERS
+        self._mob_by_net_id = {}
+        self._next_network_mob_id = 1
         slot = int(getattr(self, 'mp_local_slot', 0))
         self.players[slot] = Player(self, player_spawn[0], player_spawn[1])
         self.players[slot].mp_slot = slot

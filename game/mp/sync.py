@@ -242,9 +242,7 @@ def apply_snapshot(game, snap):
         seen_m.add(nid)
         mob = game._mob_by_net_id.get(nid)
         if mob is None:
-            mob = Mob(game, int(md['tx']), int(md['ty']), mob_type=md['mt'])
-            mob.network_id = nid
-            game._mob_by_net_id[nid] = mob
+            mob = Mob(game, int(md['tx']), int(md['ty']), mob_type=md['mt'], net_id=nid)
         _apply_mob_visual(mob, md)
     for nid, mob in list(game._mob_by_net_id.items()):
         if nid not in seen_m:
