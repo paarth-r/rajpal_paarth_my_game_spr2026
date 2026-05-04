@@ -44,9 +44,12 @@
   "hotbar": [
     [
       "gold_coin",
-      3
+      2
     ],
-    null,
+    [
+      "cobweb",
+      2
+    ],
     [
       "iron_scrap",
       3
@@ -69,7 +72,7 @@
   },
   "equipment_meta": {},
   "selected_hotbar_index": 2,
-  "player_health": 145,
+  "player_health": 40,
   "current_level": "level1.txt",
   "mob_states": {
     "intro.txt": [],
@@ -96,13 +99,6 @@
         "mob_type": "statue"
       },
       {
-        "tile_x": 18,
-        "tile_y": 3,
-        "health": 200,
-        "state": "idle",
-        "mob_type": "statue"
-      },
-      {
         "tile_x": 21,
         "tile_y": 20,
         "health": 200,
@@ -118,10 +114,12 @@
       }
     ]
   },
-  "discovered_recipes": [],
+  "discovered_recipes": [
+    "woven_cobweb"
+  ],
   "player_class_id": "assassin",
   "player_level": 2,
-  "player_xp": 0,
+  "player_xp": 55,
   "skill_points": 0,
   "purchased_skill_nodes": [
     "ass_blade"

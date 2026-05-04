@@ -104,6 +104,11 @@ def create_new_world(self, class_id=None, mp=False):
     self.my_opened_chests = set()
     self._chest_openers = {}
     self.intro_exit_unlocked = False
+    self.player_roster = {}
+    self.roster_locked = False
+    username = getattr(self, 'username', '').strip()
+    if username and mp:
+        self.player_roster[username] = {}
     self._profile_on_new_world = profile
     self._pending_empty_character_start = profile is None
     self.load_level(self.current_level_name, create_player=True)
@@ -122,7 +127,9 @@ def create_new_world(self, class_id=None, mp=False):
 
 def list_save_files(self, mp=None):
     """List save files. mp=True → mp only, mp=False → solo only, mp=None → all."""
-    all_saves = sorted([f for f in os.listdir(self.saves_dir) if f.endswith('.json')])
+    import re
+    pattern = re.compile(r'^(mp_)?world_\d+\.json$')
+    all_saves = sorted([f for f in os.listdir(self.saves_dir) if pattern.match(f)])
     if mp is True:
         return [f for f in all_saves if is_mp_save(f)]
     if mp is False:
@@ -221,6 +228,8 @@ def save_inventory_state(self):
             'purchased_skill_nodes': sorted(self.purchased_skill_nodes),
             'opened_chests': sorted(getattr(self, 'opened_chests', set())),
             'intro_exit_unlocked': bool(getattr(self, 'intro_exit_unlocked', False)),
+            'player_roster': getattr(self, 'player_roster', {}),
+            'roster_locked': bool(getattr(self, 'roster_locked', False)),
         }
         with open(self.save_path, 'w') as f:
             json.dump(payload, f, indent=2)
@@ -293,6 +302,10 @@ def load_inventory_state(self):
         else:
             self.opened_chests = set()
         self.intro_exit_unlocked = bool(payload.get('intro_exit_unlocked', False))
+        self.player_roster = payload.get('player_roster', {})
+        if not isinstance(self.player_roster, dict):
+            self.player_roster = {}
+        self.roster_locked = bool(payload.get('roster_locked', False))
         self.my_opened_chests = set(self.opened_chests)
         self._apply_starts_known_recipes()
         self._sync_discovered_recipes_from_inventory()

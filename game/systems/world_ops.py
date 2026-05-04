@@ -274,6 +274,9 @@ def go_to_next_level(self):
         return
     next_level = self.level_order[idx + 1]
     self.mob_states_by_level[self.current_level_name] = self._snapshot_current_level_mobs()
+    from game.systems import intro_ops as _intro_ops
+    if _intro_ops.is_intro_level(self) and getattr(self, 'mp_mode', None) == 'host':
+        self.roster_locked = True
     if getattr(self, 'mp_mode', None) == 'host':
         _save_all_guest_profiles(self, next_level)
     self.load_level(next_level, create_player=False)

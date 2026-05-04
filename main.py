@@ -216,6 +216,7 @@ class Game:
         self.pause_save_btn_rect = None
         self.pause_quit_title_btn_rect = None
         self.pause_resume_btn_rect = None
+        self.pause_change_username_btn_rect = None
         self.title_start_btn_rect = None
         self.title_new_world_btn_rect = None
         self.title_choose_save_btn_rect = None
@@ -350,6 +351,8 @@ class Game:
         self.opened_chests = set()
         self.my_opened_chests = set()
         self.intro_exit_unlocked = False
+        self.player_roster = {}
+        self.roster_locked = False
         self.current_save_name = None
         self.save_path = None
         self.inventory = Inventory(INVENTORY_SLOTS)
@@ -714,6 +717,17 @@ class Game:
                             self.state = 'intro'
                     elif self.pause_resume_btn_rect and self.pause_resume_btn_rect.collidepoint(event.pos):
                         self.pause_menu_open = False
+                    elif self.pause_change_username_btn_rect and self.pause_change_username_btn_rect.collidepoint(event.pos):
+                        new_name = self._run_username_input_screen()
+                        if new_name:
+                            self.username = new_name
+                            import json as _json
+                            cfg_path = path.join(path.dirname(__file__), 'saves', 'user_config.json')
+                            try:
+                                with open(cfg_path, 'w') as _f:
+                                    _json.dump({'username': new_name}, _f)
+                            except Exception:
+                                pass
                     continue
                 if self.state != 'playing' or self.inventory_open:
                     continue
@@ -769,39 +783,54 @@ class Game:
                 class_id = msg.get('class_id', DEFAULT_CLASS_ID)
                 if get_class_def(class_id) is None:
                     class_id = DEFAULT_CLASS_ID
-                self.mp_guest_class_ids[slot] = class_id
                 username = str(msg.get('username', '')).strip()
-                if username:
-                    self.mp_guest_usernames[slot] = username
                 data = self.mp_clients.get(slot)
-                if data:
-                    wkey = mp_profiles.world_key(getattr(self, 'current_save_name', '') or '')
-                    profile = mp_profiles.load_mp_profile(self.saves_dir, username) if username else None
-                    entry = mp_profiles.get_world_entry(profile, wkey) if profile else None
-                    if entry:
+
+                # Roster enforcement
+                roster = getattr(self, 'player_roster', {})
+                locked = getattr(self, 'roster_locked', False)
+                if locked and username not in roster:
+                    if data:
                         self.mp_host_session.send_to_slot(
                             data['sock'], data['lock'],
-                            mp_profiles.build_inv_restore(entry),
+                            {'type': 'rejected', 'reason': 'This world is locked. Only original players may join.'},
                         )
-                    else:
-                        lv = getattr(self, 'current_level_name', None)
-                        starter_looted = any(
-                            intro_ops.chest_storage_key(lv, sx, sy) in getattr(self, 'my_opened_chests', set())
-                            or intro_ops.chest_storage_key(lv, sx, sy) in self.opened_chests
-                            for sx, sy in intro_ops.STARTER_CHEST_TILES
-                        )
-                        if starter_looted:
-                            items = intro_ops.class_starter_loot_entries(class_id)
+                    self._mp_eject_client(slot)
+                else:
+                    # Add to roster if still in tutorial
+                    if username and username not in roster:
+                        roster[username] = {}
+                        self.player_roster = roster
+                    self.mp_guest_class_ids[slot] = class_id
+                    if username:
+                        self.mp_guest_usernames[slot] = username
+                    if data:
+                        # Restore from roster if they have a saved state
+                        roster_entry = roster.get(username, {})
+                        if roster_entry:
                             self.mp_host_session.send_to_slot(
                                 data['sock'], data['lock'],
-                                {'type': 'grant_items', 'items': [[iid, cnt] for iid, cnt in items]},
+                                dict(roster_entry, type='inv_restore'),
                             )
-                            self.mp_host_session.send_to_slot(
-                                data['sock'], data['lock'],
-                                {'type': 'chest_looted_for_you',
-                                 'col': next(iter(intro_ops.STARTER_CHEST_TILES))[0],
-                                 'row': next(iter(intro_ops.STARTER_CHEST_TILES))[1]},
+                        else:
+                            lv = getattr(self, 'current_level_name', None)
+                            starter_looted = any(
+                                intro_ops.chest_storage_key(lv, sx, sy) in getattr(self, 'my_opened_chests', set())
+                                or intro_ops.chest_storage_key(lv, sx, sy) in self.opened_chests
+                                for sx, sy in intro_ops.STARTER_CHEST_TILES
                             )
+                            if starter_looted:
+                                items = intro_ops.class_starter_loot_entries(class_id)
+                                self.mp_host_session.send_to_slot(
+                                    data['sock'], data['lock'],
+                                    {'type': 'grant_items', 'items': [[iid, cnt] for iid, cnt in items]},
+                                )
+                                self.mp_host_session.send_to_slot(
+                                    data['sock'], data['lock'],
+                                    {'type': 'chest_looted_for_you',
+                                     'col': next(iter(intro_ops.STARTER_CHEST_TILES))[0],
+                                     'row': next(iter(intro_ops.STARTER_CHEST_TILES))[1]},
+                                )
             elif msg.get('type') == 'drop_item':
                 item_id = msg.get('item')
                 count = int(msg.get('count', 1))
@@ -903,6 +932,10 @@ class Game:
             profile = mp_profiles.load_mp_profile(self.saves_dir, username) or {'username': username, 'worlds': {}}
             mp_profiles.set_world_entry(profile, wkey, entry)
             mp_profiles.save_mp_profile(self.saves_dir, username, profile)
+            # Save to roster so state is restored on next join
+            if username in getattr(self, 'player_roster', {}):
+                self.player_roster[username] = entry
+                self.save_inventory_state()
         for key, rec in list(getattr(self, '_chest_openers', {}).items()):
             if key not in self.opened_chests:
                 self._check_chest_depletion(key)
@@ -984,6 +1017,16 @@ class Game:
                         self._set_map_tile(col, row, '.')
             elif msg.get('type') == 'xp_gain':
                 self.add_player_xp(int(msg.get('xp', 0)))
+            elif msg.get('type') == 'rejected':
+                reason = msg.get('reason', 'Rejected by host.')
+                pg.display.set_caption(f'REJECTED: {reason}')
+                if self.mp_client_session:
+                    try:
+                        self.mp_client_session.close()
+                    except Exception:
+                        pass
+                    self.mp_client_session = None
+                self.running = False
         dt_ms = int(self.dt * 1000)
         live = []
         for dn in self.damage_numbers:
@@ -1361,15 +1404,17 @@ class Game:
 
         btn_w, btn_h = 320, 56
         x = WIDTH // 2 - btn_w // 2
-        y0 = HEIGHT // 2 - 50
+        y0 = HEIGHT // 2 - 80
         self.pause_resume_btn_rect = pg.Rect(x, y0, btn_w, btn_h)
         is_client = getattr(self, 'mp_mode', None) == 'client'
+        self.pause_change_username_btn_rect = pg.Rect(x, y0 + 72 * (2 if not is_client else 1) + 72, btn_w, btn_h)
         if is_client:
             self.pause_save_btn_rect = None
             self.pause_quit_title_btn_rect = pg.Rect(x, y0 + 72, btn_w, btn_h)
             buttons = [
                 (self.pause_resume_btn_rect, "Resume"),
                 (self.pause_quit_title_btn_rect, "Disconnect"),
+                (self.pause_change_username_btn_rect, f"Username: {getattr(self, 'username', '?')}"),
             ]
         else:
             self.pause_save_btn_rect = pg.Rect(x, y0 + 72, btn_w, btn_h)
@@ -1378,6 +1423,7 @@ class Game:
                 (self.pause_resume_btn_rect, "Resume"),
                 (self.pause_save_btn_rect, "Save Game"),
                 (self.pause_quit_title_btn_rect, "Save & Quit to Title"),
+                (self.pause_change_username_btn_rect, f"Username: {getattr(self, 'username', '?')}"),
             ]
         for rect, text in buttons:
             hover = rect.collidepoint(pg.mouse.get_pos())
