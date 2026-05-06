@@ -372,6 +372,7 @@ class Game:
             })
         except OSError:
             pass
+        self._inv_sync_pending = True  # send initial state on first frame
         return True
 
     def new(self):
@@ -702,6 +703,10 @@ class Game:
                         if getattr(self, 'mp_mode', None) == 'client':
                             if self.mp_client_session:
                                 try:
+                                    self.mp_client_session.send(self._build_inv_sync())
+                                except Exception:
+                                    pass
+                                try:
                                     self.mp_client_session.close()
                                 except Exception:
                                     pass
@@ -779,6 +784,7 @@ class Game:
                 break
             if msg.get('type') == 'inv_sync':
                 self.mp_guest_inv_data[slot] = msg
+                self._persist_guest_state(slot)
             elif msg.get('type') == 'class_setup':
                 class_id = msg.get('class_id', DEFAULT_CLASS_ID)
                 if get_class_def(class_id) is None:
@@ -909,6 +915,28 @@ class Game:
         self.mp_clients[slot] = {'sock': conn, 'lock': lk}
         self.mp_host_session.start_reader(conn, slot)
 
+    def _persist_guest_state(self, slot):
+        """Save the latest inv_sync data for a guest to their profile and the world roster."""
+        username = self.mp_guest_usernames.get(slot)
+        inv_data = self.mp_guest_inv_data.get(slot)
+        class_id = self.mp_guest_class_ids.get(slot, 'legionnaire')
+        if not username or not inv_data:
+            return
+        if not getattr(self, 'saves_dir', None) or not getattr(self, 'current_save_name', None):
+            return
+        entry = mp_profiles.inv_sync_to_entry(inv_data, class_id, self.current_level_name)
+        # Always update roster entry (even if {} placeholder was there)
+        roster = getattr(self, 'player_roster', {})
+        if username in roster:
+            roster[username] = entry
+            self.player_roster = roster
+            self.save_inventory_state()
+        # Also persist to per-user profile file
+        wkey = mp_profiles.world_key(self.current_save_name)
+        profile = mp_profiles.load_mp_profile(self.saves_dir, username) or {'username': username, 'worlds': {}}
+        mp_profiles.set_world_entry(profile, wkey, entry)
+        mp_profiles.save_mp_profile(self.saves_dir, username, profile)
+
     def _mp_eject_client(self, slot):
         data = self.mp_clients.pop(slot, None)
         if data:
@@ -922,21 +950,11 @@ class Game:
             self.players[slot] = None
         self.mp_manual_targets.pop(slot, None)
         self._mp_remote_input.pop(slot, None)
-        username = self.mp_guest_usernames.pop(slot, None)
-        inv_data = self.mp_guest_inv_data.pop(slot, None)
-        class_id = self.mp_guest_class_ids.pop(slot, None)
-        if username and inv_data and getattr(self, 'saves_dir', None) and getattr(self, 'current_save_name', None):
-            wkey = mp_profiles.world_key(self.current_save_name)
-            entry = mp_profiles.inv_sync_to_entry(
-                inv_data, class_id or 'legionnaire', self.current_level_name)
-            profile = mp_profiles.load_mp_profile(self.saves_dir, username) or {'username': username, 'worlds': {}}
-            mp_profiles.set_world_entry(profile, wkey, entry)
-            mp_profiles.save_mp_profile(self.saves_dir, username, profile)
-            # Save to roster so state is restored on next join
-            if username in getattr(self, 'player_roster', {}):
-                self.player_roster[username] = entry
-                self.save_inventory_state()
-        for key, rec in list(getattr(self, '_chest_openers', {}).items()):
+        self._persist_guest_state(slot)
+        self.mp_guest_usernames.pop(slot, None)
+        self.mp_guest_inv_data.pop(slot, None)
+        self.mp_guest_class_ids.pop(slot, None)
+        for key in list(getattr(self, '_chest_openers', {}).keys()):
             if key not in self.opened_chests:
                 self._check_chest_depletion(key)
 
