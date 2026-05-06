@@ -983,6 +983,21 @@ class Game:
                 self.mp_manual_targets[slot] = mob if mob is not None else None
         self._mp_remote_input.clear()
 
+    def give_item_to_player(self, player, item_id, count):
+        """Route a dropped-item pickup to the right inventory (host or guest)."""
+        if getattr(self, 'mp_mode', None) == 'host' and player._is_mp_guest():
+            slot = getattr(player, 'mp_slot', None)
+            client_data = self.mp_clients.get(slot) if slot is not None else None
+            session = getattr(self, 'mp_host_session', None)
+            if client_data and session:
+                session.send_to_slot(client_data['sock'], client_data['lock'], {
+                    'type': 'grant_items',
+                    'items': [[item_id, count]],
+                })
+            return 0  # assume all picked up; guest handles full-inventory edge case
+        leftover = self.inventory.add_item(item_id, count)
+        return leftover
+
     def _mp_respawn_remote_slot(self, slot):
         p = self.players[slot]
         if p is None or self.checkpoint_tile is None:
@@ -1017,7 +1032,9 @@ class Game:
             if msg.get('type') == 'grant_items':
                 for entry in msg.get('items', []):
                     if isinstance(entry, list) and len(entry) >= 2 and entry[0] in ITEM_DEFS:
-                        self.inventory.add_item(entry[0], int(entry[1]))
+                        added = int(entry[1]) - self.inventory.add_item(entry[0], int(entry[1]))
+                        if added > 0:
+                            self.on_items_gained(entry[0], added)
             elif msg.get('type') == 'inv_restore':
                 mp_profiles.apply_inv_restore(self, msg)
             elif msg.get('type') == 'chest_looted_for_you':

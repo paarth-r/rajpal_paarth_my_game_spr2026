@@ -121,5 +121,7 @@
     "leg_veteran"
   ],
   "opened_chests": [],
-  "intro_exit_unlocked": false
+  "intro_exit_unlocked": false,
+  "player_roster": {},
+  "roster_locked": false
 }

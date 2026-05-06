@@ -64,7 +64,7 @@
     null
   ],
   "equipment": {
-    "weapon": "pugio",
+    "weapon": null,
     "head": "legion_helm",
     "chest": "legion_cuirass",
     "boots": "caligae",
@@ -72,7 +72,7 @@
   },
   "equipment_meta": {},
   "selected_hotbar_index": 2,
-  "player_health": 85,
+  "player_health": 130,
   "current_level": "level1.txt",
   "mob_states": {
     "intro.txt": [],
@@ -92,10 +92,10 @@
         "mob_type": "statue"
       },
       {
-        "tile_x": 17,
-        "tile_y": 7,
+        "tile_x": 20,
+        "tile_y": 8,
         "health": 200,
-        "state": "inactive",
+        "state": "idle",
         "mob_type": "statue"
       },
       {
@@ -129,7 +129,76 @@
   ],
   "intro_exit_unlocked": true,
   "player_roster": {
-    "paarth": {}
+    "paarth": {
+      "player_class_id": "legionnaire",
+      "player_level": 1,
+      "player_xp": 0,
+      "skill_points": 0,
+      "purchased_skill_nodes": [],
+      "player_health": 100,
+      "current_level": "level1.txt",
+      "slots": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "hotbar": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ],
+      "equipment": {
+        "weapon": null,
+        "head": null,
+        "chest": null,
+        "boots": null,
+        "shield": null
+      },
+      "equipment_meta": {},
+      "selected_hotbar_index": 0
+    }
   },
   "roster_locked": false
 }

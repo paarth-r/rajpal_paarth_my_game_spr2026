@@ -1007,9 +1007,13 @@ class DroppedItem(Sprite):
         for player in iter_scene_players(self.game):
             if self.rect.colliderect(player.hit_rect):
                 before = self.count
-                leftover = self.game.inventory.add_item(self.item_id, self.count)
+                give = getattr(self.game, 'give_item_to_player', None)
+                if give:
+                    leftover = give(player, self.item_id, self.count)
+                else:
+                    leftover = self.game.inventory.add_item(self.item_id, self.count)
                 picked = before - leftover
-                if picked > 0:
+                if picked > 0 and not (getattr(self.game, 'mp_mode', None) == 'host' and player._is_mp_guest()):
                     self.game.on_items_gained(self.item_id, picked)
                 self.count = leftover
                 if self.count <= 0:
