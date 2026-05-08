@@ -15,4 +15,4 @@ __pycache__/
 saves/
 saves/profiles/
 saves/user_config.json
-docs/
+docs/EXPANSION_DESIGN.md
