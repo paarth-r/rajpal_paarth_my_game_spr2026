@@ -752,10 +752,22 @@ class Mob(Sprite):
             return
 
         in_chase = dist_sq_tiles <= (self.mob_chase_range_tiles ** 2) and dist_sq_tiles > 0 and has_los
-        adjacent = (abs(dx_tile) + abs(dy_tile)) == 1
         in_attack_range = dist_sq_tiles <= (self.mob_attack_range_tiles ** 2)
+        # Minimum distance mob tries to maintain from the player (range - 1 tile).
+        # For melee mobs (range ≤ 1.5) this rounds to ~0 so backing away never triggers.
+        _pref_min = max(0.0, self.mob_attack_range_tiles - 1.0)
+        too_close = dist_sq_tiles > 0 and dist_sq_tiles < _pref_min * _pref_min and has_los
 
         if self.state == 'attack':
+            # Cancel attack immediately if player has moved out of LOS mid-animation
+            if not has_los:
+                self.state = 'idle'
+                self.anim_frame = 0
+                self.attack_damage_dealt = False
+                self._update_image_cache(self.idle_frames[0])
+                self.rect.center = self.hit_rect.center
+                self._ensure_rect_valid()
+                return
             if now - self.last_anim > self.mob_attack_anim_speed:
                 self.last_anim = now
                 self.anim_frame += 1
@@ -802,14 +814,21 @@ class Mob(Sprite):
             self._ensure_rect_valid()
             return
 
-        # Tile-based move: one step every MOB_MOVE_DELAY toward player (slow increases effective delay)
-        if in_chase and self.move_target is None and (now - self.last_move) >= self._effective_move_delay_ms():
-            self.last_move = now
-            if adjacent:
-                pass  # next tick can attack
-            else:
-                step_x = 0 if dx_tile == 0 else (1 if dx_tile > 0 else -1)
-                step_y = 0 if dy_tile == 0 else (1 if dy_tile > 0 else -1)
+        # Tile-based move: stop when in attack range; back away if player is too close.
+        if self.move_target is None and (now - self.last_move) >= self._effective_move_delay_ms():
+            step_x = 0 if dx_tile == 0 else (1 if dx_tile > 0 else -1)
+            step_y = 0 if dy_tile == 0 else (1 if dy_tile > 0 else -1)
+            if too_close:
+                # Back away to preferred minimum distance
+                self.last_move = now
+                ax, ay = -step_x, -step_y
+                if abs(dx_tile) >= abs(dy_tile):
+                    self.try_move_tile(ax, 0) or self.try_move_tile(0, ay)
+                else:
+                    self.try_move_tile(0, ay) or self.try_move_tile(ax, 0)
+            elif in_chase and not in_attack_range:
+                # Advance toward player until just inside attack range
+                self.last_move = now
                 if abs(dx_tile) >= abs(dy_tile):
                     self.try_move_tile(step_x, 0) or self.try_move_tile(0, step_y)
                 else:
@@ -831,8 +850,8 @@ class Mob(Sprite):
         self.rect.center = self.hit_rect.center
         self._ensure_rect_valid()
 
-        # Row 0 = idle (active), row 1 = walk; use walk when in chase and not adjacent
-        if in_chase and not adjacent:
+        # Walk animation while closing in; idle when at attack range or backing away
+        if in_chase and not in_attack_range and not too_close:
             self.state = 'walk'
         else:
             self.state = 'idle'

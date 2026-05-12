@@ -257,11 +257,11 @@
         "stackable": false,
         "max_stack": 1,
         "description": "A heavy hammer torn from a stone sentinel. Scales with strength.",
-        "attack_range_tiles": 2,
+        "attack_range_tiles": 1,
         "base_damage": 45,
         "scaling_stat": "strength",
         "scaling_factor": 0.7,
-        "attack_speed_bonus": 40,
+        "attack_speed_bonus": 1100,
         "salvage": [
             {
                 "item_id": "stone_chip",
@@ -824,11 +824,11 @@
         "stackable": false,
         "max_stack": 1,
         "description": "A heavy hammer torn from a stone sentinel. Blessing depends on which god's rune tempered it.",
-        "attack_range_tiles": 2,
+        "attack_range_tiles": 1,
         "base_damage": 52,
         "scaling_stat": "strength",
         "scaling_factor": 0.7,
-        "attack_speed_bonus": 40,
+        "attack_speed_bonus": 1100,
         "salvage": [
             {
                 "item_id": "stone_chip",

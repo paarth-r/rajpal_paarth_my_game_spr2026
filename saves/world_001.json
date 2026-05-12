@@ -6,41 +6,44 @@
     ],
     [
       "cobweb",
-      4
+      40
     ],
     [
       "assassin_blade_shard",
-      1
+      14
     ],
+    null,
     [
       "gold_coin",
-      2
+      30
     ],
+    null,
     [
-      "stone_chip",
-      3
+      "ember_rune",
+      1
     ],
+    null,
     [
       "assassins_grace",
       1
     ],
-    null,
     [
-      "string",
+      "soul_stealer",
       1
     ],
+    [
+      "assassin_handle_wrap",
+      6
+    ],
+    null,
+    null,
+    null,
+    null,
+    null,
     [
       "assassins_grace",
       1
     ],
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
     null,
     null,
     null,
@@ -67,43 +70,61 @@
   ],
   "hotbar": [
     [
-      "gold_coin",
-      88
+      "soul_stealer",
+      1
     ],
     [
       "gladius",
       1
     ],
     [
-      "health_potion",
+      "health_potion_large",
       2
     ],
     [
-      "stone_hammer",
-      1
+      "health_potion",
+      3
+    ],
+    [
+      "aug_assassin_shortbow",
+      1,
+      {
+        "infused_rune": "storm_rune"
+      }
+    ],
+    [
+      "gold_coin",
+      99
     ],
     null,
-    null,
-    null,
-    null
+    [
+      "stone_hammer",
+      1
+    ]
   ],
   "equipment": {
-    "weapon": "assassin_shortbow",
+    "weapon": "aug_stone_hammer",
     "head": "legion_helm",
     "chest": "legion_cuirass",
     "boots": "legion_boots",
-    "shield": null
+    "shield": "lichenward_strap"
   },
-  "equipment_meta": {},
+  "equipment_meta": {
+    "weapon": {
+      "infused_rune": "frost_rune"
+    }
+  },
   "selected_hotbar_index": 3,
-  "player_health": 265,
-  "current_level": "level5.txt",
+  "player_health": 370,
+  "current_level": "level7.txt",
   "mob_states": {
     "level1.txt": [],
     "level2.txt": [],
     "level3.txt": [],
     "level4.txt": [],
-    "level5.txt": []
+    "level5.txt": [],
+    "level6.txt": [],
+    "level7.txt": []
   },
   "discovered_recipes": [
     "assassin_shortbow",
@@ -111,14 +132,17 @@
     "woven_cobweb"
   ],
   "player_class_id": "legionnaire",
-  "player_level": 7,
-  "player_xp": 65,
-  "skill_points": 2,
+  "player_level": 14,
+  "player_xp": 81,
+  "skill_points": 6,
   "purchased_skill_nodes": [
     "leg_brutality",
     "leg_bulwark",
     "leg_discipline",
-    "leg_veteran"
+    "leg_ironwall",
+    "leg_unbroken",
+    "leg_veteran",
+    "leg_warlord"
   ],
   "opened_chests": [],
   "intro_exit_unlocked": false,

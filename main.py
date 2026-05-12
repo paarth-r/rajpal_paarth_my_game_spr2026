@@ -393,6 +393,7 @@ class Game:
         self.mp_pending_send = {'moves': [], 'attack': False, 'clear': False, 'tgt': None, 'chest_req': False, 'heal': 0}
         self.mp_client_session = None
         self.mp_client_lost = False
+        self.mp_client_dead = False
         self.mp_latest_snapshot = None
         self._mp_remote_input = {}
         self.mp_guest_class_ids = {}
@@ -484,7 +485,8 @@ class Game:
                     self._mp_poll_host_network()
                     self._mp_host_flush_snapshot()
             else:
-                _pause = self.pause_menu_open or (self.inventory_open and getattr(self, 'mp_mode', None) != 'host')
+                is_host = getattr(self, 'mp_mode', None) == 'host'
+                _pause = (self.pause_menu_open and not is_host) or (self.inventory_open and not is_host)
                 if not _pause:
                     self.update()
                 self.draw()
@@ -527,13 +529,15 @@ class Game:
                         self.state = 'playing'
                     if event.key == pg.K_n:
                         is_mp = bool(getattr(self, 'mp_host_flag', False))
-                        profile = self.load_profile()
-                        if profile and not is_mp:
-                            self.create_new_world(profile.get('player_class_id', DEFAULT_CLASS_ID), mp=False)
-                        else:
-                            self.class_picker_for_new_world = True
-                            self.class_picker_new_world_is_mp = is_mp
+                        # Always show the class picker. For SP, profile is ignored entirely —
+                        # each world is self-contained. For MP, pre-select last played class.
+                        self.class_picker_for_new_world = True
+                        self.class_picker_new_world_is_mp = is_mp
+                        if is_mp:
+                            profile = self.load_profile()
                             self.class_picker_selected_id = profile.get('player_class_id', DEFAULT_CLASS_ID) if profile else DEFAULT_CLASS_ID
+                        else:
+                            self.class_picker_selected_id = DEFAULT_CLASS_ID
                     if event.key == pg.K_s:
                         self.save_picker_open = not self.save_picker_open
                     if (
@@ -1024,6 +1028,12 @@ class Game:
         if snap and snap.get('tick', 0) != self._mp_applied_tick:
             mp_sync.apply_snapshot(self, snap)
             self._mp_applied_tick = snap.get('tick', 0)
+            p = self.player
+            if p is not None:
+                if p.health <= 0:
+                    self.mp_client_dead = True
+                elif self.mp_client_dead:
+                    self.mp_client_dead = False
         while True:
             try:
                 msg = self.mp_host_messages.get_nowait()
@@ -1377,8 +1387,21 @@ class Game:
             self.draw_inventory()
         if self.pause_menu_open:
             self.draw_pause_menu()
+        if getattr(self, 'mp_client_dead', False):
+            self._draw_mp_death_overlay()
         self.display.blit(self.screen, (0, 0))
         pg.display.flip()
+
+    def _draw_mp_death_overlay(self):
+        overlay = pg.Surface((WIDTH, HEIGHT), pg.SRCALPHA)
+        overlay.fill((10, 0, 0, 200))
+        self.screen.blit(overlay, (0, 0))
+        title_font = pg.font.Font(pg.font.match_font('arial'), 64)
+        msg_font = pg.font.Font(pg.font.match_font('arial'), 24)
+        title = title_font.render("You Died", True, RED)
+        msg = msg_font.render("Waiting to respawn...", True, WHITE)
+        self.screen.blit(title, title.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60)))
+        self.screen.blit(msg, msg.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 10)))
 
     def draw_death(self):
         """Death screen shown before respawning."""
